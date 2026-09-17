@@ -1,0 +1,54 @@
+{
+  "base_year": 2023,
+  "check_year": 2025,
+  "flagged_total": 7018,
+  "flagged_evaluable": 6874,
+  "flagged_confirmed": 282,
+  "flagged_unchanged": 6409,
+  "flagged_contrary": 183,
+  "flagged_unevaluable": 144,
+  "control_total": 17795,
+  "control_evaluable": 17652,
+  "control_dropped": 1042,
+  "control_rose": 111,
+  "by_direction": {
+    "nbi_optimistic": {
+      "total": 1304,
+      "confirmed": 160,
+      "unchanged": 1086,
+      "contrary": 22,
+      "unevaluable": 36,
+      "evaluable": 1268,
+      "alignment": 0.1262,
+      "base_rate": 0.059,
+      "lift": 0.0672,
+      "significance": {
+        "z": 9.47,
+        "p_value": 2.814904567095953e-21,
+        "risk_ratio": 2.14
+      }
+    },
+    "nbi_pessimistic": {
+      "total": 5714,
+      "confirmed": 122,
+      "unchanged": 5323,
+      "contrary": 161,
+      "unevaluable": 108,
+      "evaluable": 5606,
+      "alignment": 0.0218,
+      "base_rate": 0.0063,
+      "lift": 0.0155,
+      "significance": {
+        "z": 10.14,
+        "p_value": 3.8497494810814135e-24,
+        "risk_ratio": 3.46
+      }
+    }
+  },
+  "predictive_alignment": 0.041,
+  "control_drop_rate": 0.059,
+  "control_rise_rate": 0.0063,
+  "pooled_base_rate": 0.016,
+  "expected_confirmations": 110.1,
+  "lift": 0.025
+}

@@ -222,3 +222,143 @@ class TestEndToEnd:
         assert result.flagged_total == 1
         assert result.flagged_confirmed == 1
         assert result.predictive_alignment == 1.0
+
+
+class TestDirectionMatchedBaseRate:
+    """Each flag direction must be scored against the movement it predicts.
+
+    An NBI-optimistic flag is confirmed by a downgrade; an NBI-pessimistic flag
+    by an upgrade. Scoring both against the drop rate — which this harness did
+    at first — compares most flags against the base rate for the opposite
+    movement, and on the real 2023 data that artefact was the pooled headline:
+    5,714 of 7,018 flags were pessimistic, so a −1.8% pooled lift was reported
+    while the optimistic flags were in fact lifting well above their own base
+    rate.
+    """
+
+    def _control(self, conn, later_ratings, first=100):
+        """Unflagged components with both sources, moving as specified."""
+        for i, later in enumerate(later_ratings, start=first):
+            struct = f"C{i:05d}"
+            add_rating(conn, struct, 2023, "deck", 6)
+            add_rating(conn, struct, 2025, "deck", later)
+            add_element(conn, struct, 2023)
+
+    def test_the_two_control_rates_are_measured_separately(self):
+        conn = make_conn()
+        # 10 controls: 2 dropped, 3 rose, 5 unchanged.
+        self._control(conn, [5, 5, 7, 7, 7, 6, 6, 6, 6, 6])
+        result = validate(conn)
+        assert result.control_evaluable == 10
+        assert result.control_dropped == 2
+        assert result.control_rose == 3
+        assert result.control_drop_rate == 0.2
+        assert result.control_rise_rate == 0.3
+
+    def test_a_pessimistic_flag_is_scored_against_the_rise_rate(self):
+        conn = make_conn()
+        self._control(conn, [5, 5, 7, 7, 7, 6, 6, 6, 6, 6])   # drop 20%, rise 30%
+        add_rating(conn, "P00001", 2023, "deck", 4)
+        add_rating(conn, "P00001", 2025, "deck", 6)            # rose: confirmed
+        add_element(conn, "P00001", 2023)
+        add_flag(conn, "P00001", "deck", 4, direction="nbi_pessimistic")
+
+        result = validate(conn)
+        stats = result.direction_stats()["nbi_pessimistic"]
+        assert stats["confirmed"] == 1
+        assert stats["alignment"] == 1.0
+        assert stats["base_rate"] == 0.3        # the rise rate, not the drop rate
+        assert stats["lift"] == pytest.approx(0.7)
+
+    def test_an_optimistic_flag_is_scored_against_the_drop_rate(self):
+        conn = make_conn()
+        self._control(conn, [5, 5, 7, 7, 7, 6, 6, 6, 6, 6])
+        add_rating(conn, "O00001", 2023, "deck", 7)
+        add_rating(conn, "O00001", 2025, "deck", 5)            # dropped: confirmed
+        add_element(conn, "O00001", 2023)
+        add_flag(conn, "O00001", "deck", 7, direction="nbi_optimistic")
+
+        result = validate(conn)
+        stats = result.direction_stats()["nbi_optimistic"]
+        assert stats["base_rate"] == 0.2        # the drop rate
+        assert stats["lift"] == pytest.approx(0.8)
+
+    def test_the_pooled_base_rate_follows_the_flag_mix(self):
+        """A pooled rate must weight each direction by how many flags it has."""
+        conn = make_conn()
+        self._control(conn, [5, 5, 7, 7, 7, 6, 6, 6, 6, 6])   # drop 20%, rise 30%
+        # Three pessimistic flags, one optimistic. None move, so alignment is 0
+        # and the lift is exactly the negative of the pooled base rate.
+        for i in range(3):
+            struct = f"P{i:05d}"
+            add_rating(conn, struct, 2023, "deck", 4)
+            add_rating(conn, struct, 2025, "deck", 4)
+            add_element(conn, struct, 2023)
+            add_flag(conn, struct, "deck", 4, direction="nbi_pessimistic")
+        add_rating(conn, "O00001", 2023, "deck", 7)
+        add_rating(conn, "O00001", 2025, "deck", 7)
+        add_element(conn, "O00001", 2023)
+        add_flag(conn, "O00001", "deck", 7, direction="nbi_optimistic")
+
+        result = validate(conn)
+        # 3 x 0.30 + 1 x 0.20 = 1.1 expected confirmations over 4 evaluable.
+        assert result.expected_confirmations == pytest.approx(1.1)
+        assert result.pooled_base_rate == pytest.approx(0.275)
+        assert result.predictive_alignment == 0.0
+        assert result.lift == pytest.approx(-0.275)
+
+    def test_expected_confirmations_is_not_rounded_before_dividing(self):
+        """Rounding the expected count for display must not move the lift."""
+        conn = make_conn()
+        self._control(conn, [5, 6, 6, 6, 6, 6, 6, 6, 6, 6])   # drop 10%, rise 0%
+        add_rating(conn, "O00001", 2023, "deck", 7)
+        add_rating(conn, "O00001", 2025, "deck", 5)
+        add_element(conn, "O00001", 2023)
+        add_flag(conn, "O00001", "deck", 7, direction="nbi_optimistic")
+
+        result = validate(conn)
+        # One evaluable flag x a 10% base rate = 0.1 expected, which rounds to
+        # 0.1 for display but must stay 0.1 (not 0.0) in the rate.
+        assert result.pooled_base_rate == pytest.approx(0.1)
+        assert result.lift == pytest.approx(0.9)
+
+    def test_the_report_shows_both_control_rates_and_per_direction_lift(self):
+        conn = make_conn()
+        self._control(conn, [5, 5, 7, 7, 7, 6, 6, 6, 6, 6])
+        add_rating(conn, "P00001", 2023, "deck", 4)
+        add_rating(conn, "P00001", 2025, "deck", 6)
+        add_element(conn, "P00001", 2023)
+        add_flag(conn, "P00001", "deck", 4, direction="nbi_pessimistic")
+
+        text = render(validate(conn))
+        assert "rose by 2025" in text
+        assert "dropped by 2025" in text
+        assert "each against its own base rate" in text
+
+
+class TestSignificance:
+    """A lift with no significance figure beside it is an uncaveated number."""
+
+    def test_a_large_clear_difference_is_significant(self):
+        z = validate.__globals__["ValidationResult"].two_proportion_z(160, 1268, 1042, 17652)
+        assert z["z"] > 5
+        assert z["p_value"] < 1e-6
+        assert z["risk_ratio"] == pytest.approx(2.14, abs=0.01)
+
+    def test_the_same_rate_in_both_groups_is_not_significant(self):
+        z = validate.__globals__["ValidationResult"].two_proportion_z(10, 100, 100, 1000)
+        assert abs(z["z"]) < 0.001
+        assert z["p_value"] > 0.9
+        assert z["risk_ratio"] == 1.0
+
+    def test_a_tiny_sample_does_not_reach_significance(self):
+        """Two flags out of three looks like a huge lift and means nothing."""
+        z = validate.__globals__["ValidationResult"].two_proportion_z(2, 3, 100, 1000)
+        assert z["p_value"] > 0.001
+
+    def test_empty_groups_return_none_rather_than_a_number(self):
+        cls = validate.__globals__["ValidationResult"]
+        assert cls.two_proportion_z(0, 0, 10, 100) is None
+        assert cls.two_proportion_z(1, 10, 0, 0) is None
+        # No movement anywhere: there is no rate to compare, not a zero one.
+        assert cls.two_proportion_z(0, 10, 0, 100) is None

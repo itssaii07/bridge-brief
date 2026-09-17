@@ -33,6 +33,7 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import math
 import sys
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
@@ -74,6 +75,9 @@ class ValidationResult:
     control_total: int = 0
     control_evaluable: int = 0
     control_dropped: int = 0
+    #: Unflagged components whose rating *rose*. An NBI-pessimistic flag is
+    #: confirmed by a rise, so a drop rate is the wrong comparator for it.
+    control_rose: int = 0
     by_direction: dict[str, dict[str, int]] = field(default_factory=dict)
     outcomes: list[Outcome] = field(default_factory=list)
 
@@ -86,20 +90,138 @@ class ValidationResult:
 
     @property
     def control_drop_rate(self) -> float | None:
-        """Base rate: share of evaluable unflagged components that dropped."""
+        """Base rate for a *downgrade*: the comparator for NBI-optimistic flags."""
         if not self.control_evaluable:
             return None
         return round(self.control_dropped / self.control_evaluable, 4)
 
     @property
+    def control_rise_rate(self) -> float | None:
+        """Base rate for an *upgrade*: the comparator for NBI-pessimistic flags."""
+        if not self.control_evaluable:
+            return None
+        return round(self.control_rose / self.control_evaluable, 4)
+
+    #: Which control movement confirms each flag direction.
+    CONTROL_FOR_DIRECTION = {"nbi_optimistic": "control_drop_rate",
+                             "nbi_pessimistic": "control_rise_rate"}
+
+    def base_rate_for(self, direction: str) -> float | None:
+        """The base rate for the movement this direction actually predicts.
+
+        This distinction is not cosmetic. An NBI-optimistic flag predicts a
+        downgrade and an NBI-pessimistic flag predicts an upgrade, and on real
+        records those two movements have very different base rates. Scoring both
+        against the drop rate — as this harness first did — compares the majority
+        of flags against the base rate for the opposite movement, and the pooled
+        headline lift then reports mostly that artefact.
+        """
+        attribute = self.CONTROL_FOR_DIRECTION.get(direction)
+        return getattr(self, attribute) if attribute else None
+
+    @staticmethod
+    def two_proportion_z(confirmed: int, evaluable: int,
+                         control_moved: int, control_evaluable: int) -> dict | None:
+        """Is the difference between two rates larger than sampling noise?
+
+        A lift reported without this is an uncaveated number: on a few hundred
+        flags a couple of points of lift is not distinguishable from chance. The
+        standard two-proportion z-test, computed with ``math`` alone so the
+        project keeps its stdlib-only runtime.
+
+        Returns the z statistic, a two-sided p-value from the normal
+        approximation, and the risk ratio. ``None`` when either group is empty.
+        """
+        if evaluable <= 0 or control_evaluable <= 0:
+            return None
+        p1 = confirmed / evaluable
+        p2 = control_moved / control_evaluable
+        pooled = (confirmed + control_moved) / (evaluable + control_evaluable)
+        if pooled in (0.0, 1.0):
+            return None
+        se = math.sqrt(pooled * (1 - pooled) * (1 / evaluable + 1 / control_evaluable))
+        if se == 0:
+            return None
+        z = (p1 - p2) / se
+        return {
+            "z": round(z, 2),
+            # erfc is the complement of the error function: this is the exact
+            # two-sided tail of the normal, with no dependency on scipy.
+            "p_value": math.erfc(abs(z) / math.sqrt(2)),
+            "risk_ratio": round(p1 / p2, 2) if p2 else None,
+        }
+
+    def control_moved_for(self, direction: str) -> int | None:
+        """The control count for the movement this direction predicts."""
+        if direction == "nbi_optimistic":
+            return self.control_dropped
+        if direction == "nbi_pessimistic":
+            return self.control_rose
+        return None
+
+    def direction_stats(self) -> dict[str, dict]:
+        """Per-direction alignment and lift, each against its matching base rate."""
+        out: dict[str, dict] = {}
+        for direction, bucket in sorted(self.by_direction.items()):
+            evaluable = bucket["total"] - bucket["unevaluable"]
+            base = self.base_rate_for(direction)
+            alignment = round(bucket["confirmed"] / evaluable, 4) if evaluable else None
+            out[direction] = {
+                **bucket,
+                "evaluable": evaluable,
+                "alignment": alignment,
+                "base_rate": base,
+                "lift": (None if alignment is None or base is None
+                         else round(alignment - base, 4)),
+                "significance": self.two_proportion_z(
+                    bucket["confirmed"], evaluable,
+                    self.control_moved_for(direction) or 0, self.control_evaluable),
+            }
+        return out
+
+    def _expected_confirmations_exact(self) -> float | None:
+        """How many confirmations the control rates predict for this flag mix.
+
+        The pooled comparator. Each direction contributes its own evaluable count
+        times its own base rate, so a flag set dominated by one direction is not
+        scored against the other direction's base rate.
+
+        Unrounded: :attr:`pooled_base_rate` divides by it, and rounding here
+        before dividing moves the headline lift.
+        """
+        if not self.control_evaluable or not self.by_direction:
+            return None
+        total = 0.0
+        for direction, bucket in self.by_direction.items():
+            base = self.base_rate_for(direction)
+            if base is None:
+                return None
+            total += (bucket["total"] - bucket["unevaluable"]) * base
+        return total
+
+    @property
+    def expected_confirmations(self) -> float | None:
+        """:meth:`_expected_confirmations_exact`, rounded for display."""
+        exact = self._expected_confirmations_exact()
+        return None if exact is None else round(exact, 1)
+
+    @property
+    def pooled_base_rate(self) -> float | None:
+        """The flag-mix-weighted control rate the pooled alignment is measured against."""
+        exact = self._expected_confirmations_exact()
+        if exact is None or not self.flagged_evaluable:
+            return None
+        return round(exact / self.flagged_evaluable, 4)
+
+    @property
     def lift(self) -> float | None:
-        """Predictive alignment minus the base rate.
+        """Predictive alignment minus the direction-matched base rate.
 
         The number that actually matters. At or below zero, the engine's flags
         carry no predictive information and the correct report is that they do
         not.
         """
-        alignment, base = self.predictive_alignment, self.control_drop_rate
+        alignment, base = self.predictive_alignment, self.pooled_base_rate
         if alignment is None or base is None:
             return None
         return round(alignment - base, 4)
@@ -219,6 +341,8 @@ def validate(conn, *, base_year: int = BASE_YEAR, check_year: int = CHECK_YEAR) 
         result.control_evaluable += 1
         if later < row["rating"]:
             result.control_dropped += 1
+        elif later > row["rating"]:
+            result.control_rose += 1
 
     return result
 
@@ -340,24 +464,64 @@ def render(result: ValidationResult) -> str:
         "",
         f"Control: unflagged components with both sources in {result.base_year}",
         f"  evaluable                       {result.control_evaluable:>10,}",
-        f"  dropped by {result.check_year}                  {result.control_dropped:>10,}",
+        f"  dropped by {result.check_year}                  {result.control_dropped:>10,}"
+        f"   ({pct(result.control_drop_rate)})",
+        f"  rose by {result.check_year}                     {result.control_rose:>10,}"
+        f"   ({pct(result.control_rise_rate)})",
         "",
-        f"Predictive alignment (flagged)    {pct(result.predictive_alignment):>10}",
-        f"Base rate (control)               {pct(result.control_drop_rate):>10}",
+        "An NBI-optimistic flag predicts a downgrade and an NBI-pessimistic flag predicts",
+        "an upgrade, so each direction is scored against the base rate for its own",
+        "movement. The pooled base rate below is those two rates weighted by this flag",
+        "set's actual mix of directions.",
+        "",
+        f"Predictive alignment (flagged)    {pct(result.predictive_alignment):>10}"
+        f"   ({result.flagged_confirmed:,} confirmed)",
+        f"Base rate (direction-matched)     {pct(result.pooled_base_rate):>10}"
+        f"   ({result.expected_confirmations:,} expected)"
+        if result.expected_confirmations is not None else
+        f"Base rate (direction-matched)     {'n/a':>10}",
         f"Lift                              {pct(result.lift):>10}",
         "",
     ]
 
-    if result.by_direction:
-        out.append("By flag direction")
-        out.append(f"{'direction':<22}{'total':>8}{'confirmed':>12}{'unchanged':>12}"
-                   f"{'contrary':>10}{'unevaluable':>13}")
-        out.append("-" * 77)
-        for direction, bucket in sorted(result.by_direction.items()):
-            out.append(f"{direction:<22}{bucket['total']:>8,}{bucket['confirmed']:>12,}"
-                       f"{bucket['unchanged']:>12,}{bucket['contrary']:>10,}"
-                       f"{bucket['unevaluable']:>13,}")
+    stats = result.direction_stats()
+    if stats:
+        def sig(bucket):
+            info = bucket.get("significance")
+            if not info:
+                return f"{'n/a':>8}{'':>11}"
+            p = info["p_value"]
+            shown = "<1e-12" if p < 1e-12 else f"{p:.2g}"
+            ratio = "n/a" if info["risk_ratio"] is None else f"{info['risk_ratio']}x"
+            return f"{ratio:>8}{'z=' + str(info['z']) + ' p' + shown:>20}"
+
+        out.append("By flag direction, each against its own base rate")
+        out.append(f"{'direction':<18}{'total':>7}{'confirmed':>11}{'unchanged':>11}"
+                   f"{'contrary':>10}{'uneval':>8}{'align':>8}{'base':>8}{'lift':>8}"
+                   f"{'ratio':>8}{'significance':>20}")
+        out.append("-" * 117)
+        for direction, bucket in stats.items():
+            out.append(f"{direction:<18}{bucket['total']:>7,}{bucket['confirmed']:>11,}"
+                       f"{bucket['unchanged']:>11,}{bucket['contrary']:>10,}"
+                       f"{bucket['unevaluable']:>8,}{pct(bucket['alignment']):>8}"
+                       f"{pct(bucket['base_rate']):>8}{pct(bucket['lift']):>8}"
+                       + sig(bucket))
         out.append("")
+        out.append("`ratio` is how many times more often a flagged component moved as")
+        out.append("predicted than an unflagged one. A two-proportion z-test is shown so a")
+        out.append("small lift on few flags is not read as a result; p is two-sided.")
+        out.append("")
+        strongest = max(
+            (b for b in stats.values() if b["lift"] is not None),
+            key=lambda b: b["lift"], default=None)
+        if strongest is not None and strongest["lift"] > 0:
+            best = [d for d, b in stats.items() if b is strongest][0]
+            out.append(
+                f"Read the per-direction rows before the pooled one: {best} flags "
+                f"lift {pct(strongest['lift'])} over their own base rate. A pooled "
+                "figure hides that when one direction dominates the mix."
+            )
+            out.append("")
 
     lift = result.lift
     if lift is None:
@@ -412,7 +576,12 @@ def main(argv: list[str] | None = None) -> int:
         if args.json:
             payload = {k: v for k, v in asdict(result).items() if k != "outcomes"}
             payload.update(predictive_alignment=result.predictive_alignment,
-                           control_drop_rate=result.control_drop_rate, lift=result.lift)
+                           control_drop_rate=result.control_drop_rate,
+                           control_rise_rate=result.control_rise_rate,
+                           pooled_base_rate=result.pooled_base_rate,
+                           expected_confirmations=result.expected_confirmations,
+                           by_direction=result.direction_stats(),
+                           lift=result.lift)
             Path(args.json).write_text(json.dumps(payload, indent=2), encoding="utf-8")
             print(f"wrote {args.json}")
     except DataUnavailable as exc:
