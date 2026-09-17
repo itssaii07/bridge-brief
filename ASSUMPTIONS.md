@@ -288,6 +288,37 @@ defect area count regardless of how large the denominator is. The units are what
 source publishes, which means the constant is only meaningful for area-scaled elements;
 this is a real weakness of the rule and a thing to revisit against real data.
 
+**F10. CONFIRMED, and worse than F3 hedged: the NBE files publish no units at all.**
+F3 said `ABS_DETERIORATED_QTY = 250` "is only meaningful for area-scaled elements" and
+called that a weakness to revisit against real data. The real data settles it: there is
+no units field in the published extracts (ASSUMPTIONS.md D6), so `units` is NULL on every
+row and the constant compares 250 against a bare number whose dimension is whatever
+AASHTO assigns that element — square feet for a deck (12), linear feet for a railing,
+*each* for a bearing. The rule is dimensionally unsound as written.
+
+Measured impact on the 2023 run: of 1,304 NBI-optimistic flags, **77 (5.9%) were raised
+by the absolute-quantity rule alone** — the rest cleared a fraction threshold and would
+be flagged without it. So the rule is not load-bearing for the result, but those 77 are
+the flags least likely to survive human review, and contradiction precision should be
+read with that in mind. Two ways out, neither taken yet because both need a decision
+rather than a guess: drop the rule and accept missing the CLAUDE.md worked example, or
+carry an AASHTO element-number → unit table and make the threshold per-unit. The second
+is correct; it needs the MBE element table, which is not in the published extracts.
+
+**F11. The thresholds were NOT tuned after seeing the validation result.** The engine
+flagged 7,018 contradictions over 10,661 structures — 43.6% of structures — and 5,697 of
+those (81%) are a single pattern: NBI "fair" against near-pristine elements, one band,
+NBI-pessimistic. That looked like the obvious thing to tighten, and E3's exclusion of
+wearing-surface and protective elements gave an a-priori argument for doing so.
+
+The validation pass run *first*, on the untuned thresholds, showed that direction lifting
+1.6 points over its own base rate — 2.2% against 0.6%, a 3.46x risk ratio at
+p < 1e-12. Tightening it would have discarded a real signal to make a flag count look
+reasonable. No constant in `src/analysis/contradictions.py` has been changed from its
+pre-data value. F5 still stands as the threshold most worth tuning, and `MIN_TOTAL_QTY =
+100` is barely binding on the real distribution (the 1st percentile of flagged total
+quantity is 120, the median 2,044).
+
 **F4. A contradiction is a disagreement of one band or more**, in either direction, once
 the gates pass. The NBI-pessimistic direction (rating worse than the elements) is
 additionally required to have `deteriorated_fraction <= 0.02` — the elements must be
@@ -369,6 +400,26 @@ release uses for its bounding-box annotations. Parsing is isolated in
 `src/eval/codebrim_benchmark.py :: parse_annotation_file`. If the real layout differs,
 that one function is the change point.
 
+**H6. CODEBRIM is unavailable: the archive is encrypted.**
+`CODEBRIM_original_images.zip` was downloaded and its MD5 verified against the Zenodo
+record (`27baf3a036d0b7d757ff4df47c08c449`), so the file is byte-perfect. Extraction
+fails with `BadZipFile: Bad magic number for file header`, which means the archive is
+encrypted; Python's `zipfile` cannot decrypt AES ZIPs at all. The password is not in
+`license.md` and not in the authors' GitHub README. It was not re-downloaded — the file
+is confirmed good — and nothing was substituted for it.
+
+Consequence: milestone 6 is not run. `defect_detection_precision`, `_recall` and `_f1`
+report `n/a` **with the reason and the command that would fill them**, which is the
+behaviour the harness was built for. `CLAUDE.md` names milestones 5–6 as the first thing
+to cut if the schedule slips, and H4's annotation-format assumption is therefore still
+unverified.
+
+If the password turns up, extract with `pyzipper` or 7-Zip. A viable substitute is
+**dacl1k** (1,474 images, 2,367 bounding boxes, near-identical classes); adopting it
+would be a deviation from the specified dataset and belongs here as one, not as a silent
+swap. Either way the dataset may not be redistributed, so nothing from it is ever
+committed. Any writeup must cite the CVPR19 paper.
+
 **H5. Benchmark matching rule:** a detection matches an annotation when IoU ≥ 0.5 and the
 defect class agrees; greedy matching by descending confidence; unmatched detections are
 false positives, unmatched annotations false negatives. Class-agnostic scores are also
@@ -408,6 +459,42 @@ which is worse than a smaller denominator that is honestly labelled.
 have both NBI and NBE data in 2023 and were *not* flagged. Predictive alignment without a
 base rate is not a result — if flagged and unflagged bridges drop at the same rate, the
 engine has found nothing, and the harness will say so.
+
+**J4. CORRECTED — each direction is scored against the base rate for the movement it
+predicts.** J2 required a control base rate, and got one, but only measured the control
+*drop* rate. An NBI-pessimistic flag is confirmed by a *rise* (see `classify_outcome`), so
+81% of the flags were being compared against the base rate for the opposite movement. On
+the real records those two rates differ by an order of magnitude — 5.9% of unflagged
+components dropped, 0.6% rose — so the pooled headline was mostly that mismatch. It
+reported lift = **−1.8%** and "the flags carry no predictive information", which was
+false.
+
+With the matching comparator:
+
+| direction | flags | alignment | base rate | lift | risk ratio | significance |
+|---|---|---|---|---|---|---|
+| `nbi_optimistic` | 1,304 | 12.6% | 5.9% (drop) | **+6.7%** | 2.14x | z = 9.47, p < 1e-12 |
+| `nbi_pessimistic` | 5,714 | 2.2% | 0.6% (rise) | **+1.6%** | 3.46x | z = 10.14, p < 1e-12 |
+| pooled | 7,018 | 4.1% | 1.6% | **+2.5%** | | |
+
+The pooled base rate is the two rates weighted by this flag set's actual mix of
+directions, so a change in that mix cannot move the headline on its own.
+
+**Read the per-direction rows first.** The pooled figure is dominated by whichever
+direction has more flags, which is how the original error stayed invisible. A
+two-proportion z-test is now reported beside each lift (`math.erfc`, no new dependency),
+so a few points of lift on a few hundred flags cannot be read as a result.
+
+This was a fix to the measurement, not a tune of the engine: the flags are the same 7,018
+and no threshold changed (F11). The new comparator is unit-tested against synthetic
+fixtures whose answer is known by construction, never against the real data.
+
+**J5. The headline claim, stated precisely.** A bridge component whose 2023 element data
+showed deterioration its 2023 NBI rating did not reflect was **2.14 times more likely to
+be officially downgraded in the 2025 release** than an unflagged component with the same
+two sources available (12.6% vs 5.9%, n = 1,268 flagged and 17,652 control). This is an
+association on published federal records. It is not a causal claim, not a statement about
+any individual bridge, and not a safety judgement.
 
 **J3. Contradiction precision requires a human.** The harness samples flagged
 contradictions, writes them to a review file with their artifact IDs, and computes

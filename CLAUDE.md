@@ -69,29 +69,28 @@ Architectural, not stylistic. Do not weaken them for convenience.
 
 ## Data
 
-> ### ⚠️ CURRENT STATUS — the data is NOT on disk yet
+> ### Data status — on disk and ingested
 >
-> The datasets listed below have **not been downloaded**. `data/raw/` is empty or
-> absent. I will download the files and tell you when they are in place.
+> NBI 2023 and 2025 and the NBE 2023/2025 extracts for AL, AZ and IA are on local
+> disk and have been ingested: 621,581 and 624,193 NBI rows with 0 rejected, and
+> 66,597 / 55,905 NBE element records with 0 rejected. **10,661 structures have
+> both sources in 2023** — that is the population the contradiction engine runs on.
 >
-> Until I confirm the data has arrived:
-> - Do not download anything — the files are large and I will fetch them myself.
-> - **Do not create mock, sample, placeholder, dummy or example data files anywhere
->   under `data/`.** Not to test a pipeline, not to demonstrate output, not
->   temporarily. Write the code, make it defensive, and stop.
-> - Do not run ingest scripts. There is nothing to run them against.
-> - Small inline unit-test fixtures under `tests/` are fine and expected. They live
->   in `tests/`, never under `data/`, and are never used to produce a brief.
+> **CODEBRIM is not available.** The archive is encrypted and cannot be opened, so
+> milestone 6 reports `n/a` with the reason rather than a number. See ASSUMPTIONS.md
+> H6.
 >
-> **Delete this block once the data is on disk and verified.**
+> The rule that nothing is ever created under `data/` still stands, permanently: a
+> missing input is reported missing. Unit-test fixtures live in `tests/`, never under
+> `data/`, and never reach a brief. Real record excerpts are committed in `samples/`.
 
-### What we will have
+### What we have
 
-| Source | Coverage | Role |
-|---|---|---|
-| NBI 2023, 2025 | All states, ~624k bridges | Structure inventory + official 0–9 condition ratings |
-| NBE 2023, 2025 | Alabama, Arizona, Iowa | Element-level condition state quantities (CS1–CS4) |
-| CODEBRIM original images | 1,590 annotated images | Detector benchmark only — never demo evidence for a named bridge |
+| Source | Coverage | Role | Status |
+|---|---|---|---|
+| NBI 2023, 2025 | All states, 621,581 / 624,193 records | Structure inventory + official 0–9 condition ratings | ingested, 0 rejected |
+| NBE 2023, 2025 | Alabama, Arizona, Iowa | Element-level condition state quantities (CS1–CS4) | ingested, 0 rejected |
+| CODEBRIM original images | 1,590 annotated images | Detector benchmark only — never demo evidence for a named bridge | **unavailable — encrypted archive** |
 
 ### Never read raw data into context
 
@@ -138,6 +137,14 @@ IDs are deterministic from source coordinates — never from iteration order or
 timestamps. The reserved NDE form is intentional: it demonstrates the evidence model
 extends to sensor streams when they become available.
 
+> **Deviation found when the real data arrived: `{struct}` is state-qualified.**
+> The examples above write the bare structure number, but NBI item 8 is unique only
+> *within a state* — 40,374 numbers in the 2023 file are claimed by more than one
+> state, and `000002` by six. The bare form cannot identify a bridge nationally, so
+> `{struct}` is the postal state abbreviation followed by the normalised number:
+> `NBI-AL013450-2023-deck`, not `NBI-013450-2023-deck`. Rationale and measurements
+> are in ASSUMPTIONS.md B5.
+
 ---
 
 ## The contradiction engine — the core analytical output
@@ -151,6 +158,16 @@ Structure 013450, 2023:
   NBI  deck rating = 7  ("good")          [NBI-013450-2023-deck]
   NBE  340 sq ft of deck in CS3 ("poor")  [NBE-013450-2023-12-cs3]
   → contradiction
+```
+
+A real one, found in the published records and confirmed by the 2025 release:
+
+```
+Structure AL012757, 2023:
+  NBI  deck rating = 7 ("good")                      [NBI-AL012757-2023-deck]
+  NBE  4,078 of 7,255 units of deck in CS3/CS4 — 56% [NBE-AL012757-2023-12-cs3]
+  → contradiction, severity 1.00
+  → the 2025 NBI release rates the same deck 6
 ```
 
 Validation is built in: flag contradictions in the **2023** data, then check the
