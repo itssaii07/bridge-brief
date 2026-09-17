@@ -5,9 +5,12 @@ settle, or a guess about a file format I could not verify because the data is no
 disk. Each entry says what I assumed, why, and — where it matters — the single place
 to change it if I guessed wrong.
 
-**Nothing in this repository has been run against real data.** No dataset was
-downloaded, no file was created under `data/`, and no metric in any document is a
-measured number. Every number you see in output is produced at run time or not at all.
+**Status: the pipeline has now been run against the real published data.** The NBI
+2023/2025 files and the NBE 2023/2025 extracts for AL, AZ and IA are on local disk;
+CODEBRIM is not (see H6). Guesses that the real files settled are marked
+**CONFIRMED** or **CORRECTED** below, with what the data actually showed. No file was
+ever created under `data/`, and every number in this document is measured, not
+illustrative.
 
 ---
 
@@ -65,6 +68,45 @@ would show up as an implausible count.
 **B4. An all-zero or empty structure number is an error, not a default.** It is logged to
 `rejected_rows` with a reason and the row is skipped.
 
+**B5. CORRECTED — the join key is state-qualified, because NBI item 8 is unique only
+within a state.** B3 judged a structure-number collision "unlikely but did not verify
+it", and expected one to surface in `src/catalog.py` as an implausible count of distinct
+raw spellings per key. It does not surface there, because colliding states publish the
+*same* spelling. Measured on the real 2023 file:
+
+| | |
+|---|---|
+| NBI rows | 621,581 |
+| distinct keys, number only | 508,745 |
+| numbers claimed by >1 state | 40,374 (`000002` by six states) |
+| rows merged onto another state's bridge | 112,836 |
+
+`ratings` is keyed `(struct_norm, year, component)`, so only one state's ratings survived
+per key: Alabama reported 3,301 structures against 16,176 rows in the file. The
+contradiction engine would then have compared one state's elements against another
+state's ratings and reported the collision as a finding.
+
+`src/ids.py :: structure_key` now composes the postal state abbreviation with the
+normalised number — `AL` + `013450` → `AL013450`. Two properties make this cheap: the
+abbreviation begins with a letter, so `normalise_struct` is idempotent on a composed key
+and every ID constructor accepts one unchanged; and the key stays within `[A-Z0-9]`, so
+the existing ID parser regexes are untouched.
+
+**This is a deviation from the specification.** `CLAUDE.md` documents the bare form
+(`NBI-013450-2023-deck`); every artifact ID now carries the state
+(`NBI-AL013450-2023-deck`). The documented form cannot identify a bridge nationally, so
+it could not be kept. Recorded openly rather than silently swapped. `src/store.py ::
+resolve_structure_key` accepts the bare number an operator would read off a published
+record, and refuses to guess when more than one state uses it.
+
+After the fix, per-state NBI counts match the raw file exactly (AL 16,176, AZ 8,544,
+IA 23,720) and 10,661 of 10,662 NBE structures in 2023 join to an NBI record.
+
+**B6. CONFIRMED — the normaliser is doing real work within a state, too.** 50 keys in
+the 2023 file are claimed by more than one row of the *same* state: 48 are padding
+variants of one bridge (`'02585          '` and `'2585           '`, `'         001480'`
+and `'000000000001480'`) and 2 are byte-identical duplicate rows. These merge correctly.
+
 ---
 
 ## C. NBI file format (`src/ingest/nbi.py`)
@@ -107,6 +149,16 @@ file's SHA-256 recorded in `ingest_log`.
 
 ---
 
+**C8. CONFIRMED — every format guess in this section held.** The real header row is
+`STATE_CODE_001,STRUCTURE_NUMBER_008,...,DECK_COND_058,SUPERSTRUCTURE_COND_059,
+SUBSTRUCTURE_COND_060,CHANNEL_COND_061,CULVERT_COND_062,...`, so the item-number-first
+synonym strategy in C1 resolved every required column with no edit to `FIELDS`. Both
+years decoded as UTF-8 on the first attempt, so the `latin-1` fallback in C4 never fired.
+The single-quote text qualifier (C3) is correct: quoted free-text fields arrive clean.
+621,581 rows for 2023 and 624,193 for 2025 parsed with **0 rejected**.
+
+---
+
 ## D. NBE file format (`src/ingest/nbe.py`) — the biggest guess in the project
 
 The prompt says explicitly that the exact shape cannot be known without a real file, and
@@ -134,6 +186,43 @@ written to.
 **D4. The state is taken from the directory name** (`data/raw/nbe/{year}/{state}/`),
 falling back to a state field inside the XML if present. AL, AZ and IA are the expected
 set and the catalog reports them separately.
+
+**D6. CORRECTED — the real files are flat, not nested.** D1 assumed a sequence of
+structure elements each containing its own element records. The published shape, identical
+across all six state-year extracts, is a flat `<FHWAELEMENT>` root of repeated `<FHWAED>`
+records, each carrying its own state, structure number, element number, total quantity and
+four condition states:
+
+```xml
+<FHWAELEMENT>
+  <FHWAED>
+    <STATE>01</STATE><STRUCNUM>000042</STRUCNUM><EN>241</EN>
+    <TOTALQTY>130</TOTALQTY>
+    <CS1>0</CS1><CS2>0</CS2><CS3>130</CS3><CS4>0</CS4>
+  </FHWAED>
+  ...
+```
+
+The fix was a single entry — `fhwaed` — in `ELEMENT_TAGS`, exactly where the module
+docstring said a fix would go. Everything else held: `STRUCNUM`, `EN`, `TOTALQTY` and
+`CS1..CS4` were already in the candidate lists, and the flat-extract path in
+`_iter_candidate_nodes` handled records with no structure ancestor. D2's layout A ("four
+named fields") is the one the real data uses.
+
+Two things the real files do that D1 did not anticipate, neither of which needed code:
+
+* **There is no units field.** `units` is stored NULL throughout. This matters for F3 —
+  see F10.
+* **`TOTALQTY` is published on every record**, so the sum-the-states fallback in K5 never
+  fires and the engine's denominator is always the published quantity.
+* `EPN` (element protection number) appears on protective-system records (`EN` 5xx),
+  which E3 already excludes from component roll-ups.
+
+**D7. CONFIRMED — the state directory is authoritative, and now checked.** Each file is
+homogeneous and its records' `STATE` matches its directory (`AL`→01, `AZ`→04, `IA`→19).
+Because a misnamed directory would file every structure under the wrong state — and
+HANDOFF.md warns this "fails quietly" — the records' own state is now cross-checked
+against the directory name and a mismatch raises `NbeFormatError`.
 
 **D5. If the parser finds zero elements in a file it fails loudly** rather than recording
 an empty state. A structure with genuinely no elements and a file we failed to parse look

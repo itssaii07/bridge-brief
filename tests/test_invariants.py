@@ -6,6 +6,7 @@ break by accident under schedule pressure: fabricating data so that something
 runs.
 """
 
+from fnmatch import fnmatch
 from pathlib import Path
 
 import pytest
@@ -39,15 +40,77 @@ class TestNoFabricatedData:
                     offenders.append(f"{path.relative_to(REPO)}: {token}")
         assert offenders == [], offenders
 
+    #: The only file names scripts/extract_samples.py produces.
+    SAMPLE_PATTERNS = ("nbi_*.txt", "nbe_*_*.xml", "codebrim_annotation.xml")
+
     def test_samples_directory_contains_no_invented_records(self):
-        """samples/ holds real excerpts only, added once the data is on disk."""
+        """samples/ holds real excerpts only.
+
+        Before the data was on disk this asserted the directory was empty. Now
+        that it is populated, emptiness is the wrong test: what matters is that
+        every file here came out of a real source via
+        ``scripts/extract_samples.py`` and not out of someone's head. So the name
+        must be one the extractor produces, and — when the corresponding source
+        is on this machine — the content must actually be found in it.
+        """
         samples = REPO / "samples"
         if not samples.exists():
             return
-        contents = [p.name for p in samples.iterdir() if p.name != "README.md"]
-        # Nothing should be here yet; anything that is should have come from a
-        # real source via scripts/extract_samples.py.
-        assert contents == [], f"unexplained files in samples/: {contents}"
+        files = [p for p in samples.iterdir() if p.name != "README.md"]
+        unexplained = [
+            p.name for p in files
+            if not any(fnmatch(p.name, pattern) for pattern in self.SAMPLE_PATTERNS)
+        ]
+        assert unexplained == [], (
+            f"unexplained files in samples/: {unexplained}. Every sample must be "
+            "produced by scripts/extract_samples.py from a real source."
+        )
+
+    def test_every_nbi_sample_line_appears_in_the_real_source(self):
+        """A committed NBI sample must be a verbatim excerpt, not a paraphrase."""
+        for sample in sorted((REPO / "samples").glob("nbi_*.txt")):
+            year = sample.stem.split("_")[1]
+            directory = REPO / "data" / "raw" / "nbi" / year
+            sources = sorted(directory.glob("*.txt")) if directory.exists() else []
+            if not sources:
+                pytest.skip(f"NBI {year} is not on this machine; cannot verify")
+            lines = sample.read_text(encoding="utf-8").splitlines()
+            # The extractor takes the header plus the first N records, so the
+            # excerpt must match the head of the source line for line.
+            with open(sources[0], encoding="utf-8", errors="replace") as handle:
+                head = [next(handle).rstrip("\r\n") for _ in range(len(lines))]
+            assert lines == head, f"{sample.name} is not a verbatim excerpt of {sources[0].name}"
+
+    def test_every_nbe_sample_record_appears_in_the_real_source(self):
+        """Same for NBE, compared field by field.
+
+        The extractor re-serialises the records it keeps, so the bytes differ
+        from the source even though the content does not. Each record is
+        therefore matched as a field dictionary against the real file.
+        """
+        import zipfile
+        from xml.etree import ElementTree as ET
+
+        def fields(node):
+            return {child.tag: (child.text or "").strip() for child in node}
+
+        for sample in sorted((REPO / "samples").glob("nbe_*_*.xml")):
+            _, year, state = sample.stem.split("_")
+            directory = REPO / "data" / "raw" / "nbe" / year / state
+            archives = sorted(directory.glob("*.zip")) if directory.exists() else []
+            if not archives:
+                pytest.skip(f"NBE {year} {state} is not on this machine; cannot verify")
+            with zipfile.ZipFile(archives[0]) as archive:
+                name = [n for n in archive.namelist() if n.lower().endswith(".xml")][0]
+                source_root = ET.fromstring(archive.read(name))
+            real = [fields(node) for node in source_root]
+            sample_records = [fields(node) for node in ET.parse(sample).getroot()]
+            assert sample_records, f"{sample.name} contains no records"
+            for record in sample_records:
+                assert record in real, (
+                    f"{sample.name} contains a record that is not in "
+                    f"{archives[0].name}: {record}"
+                )
 
 
 class TestPortableTextIO:

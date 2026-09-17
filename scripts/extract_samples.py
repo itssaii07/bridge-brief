@@ -32,32 +32,68 @@ def sample_nbi(year: int, *, records: int = 3, root: Path | None = None) -> Path
     finally:
         handle.close()
     out = SAMPLES / f"nbi_{year}.txt"
-    out.write_text("".join(lines), encoding="utf-8")
+    # newline="" so the source's own line endings survive untranslated. Without
+    # it, write_text on Windows turns the file's CRLF into CRCRLF and the
+    # "excerpt" is no longer byte-identical to the record it claims to show.
+    with open(out, "w", encoding="utf-8", newline="") as handle:
+        handle.write("".join(lines))
     print(f"wrote {out} ({records} records, source encoding {encoding})")
     return out
 
 
 def sample_nbe(year: int, *, structures: int = 2, root: Path | None = None) -> list[Path]:
-    """The first couple of real structure subtrees from each state's NBE file."""
+    """Real element records from each state's NBE file, whole and unedited.
+
+    The published files are flat — a ``<FHWAELEMENT>`` root of repeated
+    ``<FHWAED>`` records, each carrying its own structure number (ASSUMPTIONS.md
+    D6) — so "a structure" is a group of sibling records sharing a ``STRUCNUM``,
+    not a subtree. Records are kept whole: a sample truncated mid-record would be
+    useless as the authority on record shape, which is what samples/ is for.
+
+    The structure-subtree path is kept for genuinely nested extracts, since other
+    states may publish that way when the corpus is extended.
+    """
     written: list[Path] = []
     for source in nbe.find_files(year, root):
         state = nbe._state_from_path(source) or "unknown"
         label, payload = next(nbe._iter_xml_sources(source))
         root_el = ET.fromstring(payload)
+
         kept = [n for n in root_el.iter() if nbe._local(n.tag) in nbe.STRUCTURE_TAGS][:structures]
+        described = "structures"
         if not kept:
-            print(f"  [warn] {label}: no structure-like nodes found; "
-                  "writing the first 4000 bytes verbatim instead")
-            out = SAMPLES / f"nbe_{year}_{state}.xml"
-            out.write_bytes(payload[:4000])
-            written.append(out)
-            continue
+            # Flat extract: take every record belonging to the first N structure
+            # numbers encountered, in document order.
+            wanted: list[str] = []
+            for node in root_el.iter():
+                if nbe._local(node.tag) not in nbe.ELEMENT_TAGS or node is root_el:
+                    continue
+                number = nbe._pick(nbe._values(node), nbe.STRUCT_KEYS)
+                if number and number not in wanted:
+                    if len(wanted) == structures:
+                        break
+                    wanted.append(number)
+            kept = [
+                node for node in root_el.iter()
+                if nbe._local(node.tag) in nbe.ELEMENT_TAGS and node is not root_el
+                and nbe._pick(nbe._values(node), nbe.STRUCT_KEYS) in wanted
+            ]
+            described = f"element records for {len(wanted)} structures"
+
+        if not kept:
+            raise DataUnavailable(
+                f"{label}: found neither structure subtrees nor element records. "
+                "The parser's tag-candidate lists in src/ingest/nbe.py do not match "
+                "this file; fix those first, then re-run."
+            )
+
         wrapper = ET.Element(root_el.tag, root_el.attrib)
         for node in kept:
             wrapper.append(node)
+        ET.indent(wrapper, space="  ")
         out = SAMPLES / f"nbe_{year}_{state}.xml"
-        out.write_bytes(ET.tostring(wrapper, encoding="utf-8"))
-        print(f"wrote {out} ({len(kept)} structures from {label})")
+        out.write_bytes(ET.tostring(wrapper, encoding="utf-8", xml_declaration=True))
+        print(f"wrote {out} ({len(kept)} {described} from {label})")
         written.append(out)
     return written
 
