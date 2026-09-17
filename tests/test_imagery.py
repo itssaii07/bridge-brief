@@ -204,6 +204,74 @@ class TestUploadProvenance:
         assert sources == {"detector"}
 
 
+class TestArchiveJunk:
+    """The published CODEBRIM zip was made on macOS and carries a __MACOSX tree.
+
+    Those AppleDouble stubs keep the original file's extension, so a suffix test
+    alone reads `__MACOSX/dataset/._DSC_0042.jpg` as a JPEG. It is a few hundred
+    bytes of resource fork, and the detector cannot decode it.
+    """
+
+    from src.ingest.codebrim import is_archive_junk
+
+    @pytest.mark.parametrize("name", [
+        "__MACOSX/original_dataset/._DSC_0042.jpg",
+        "original_dataset/._DSC_0042.jpg",
+        "original_dataset/.DS_Store",
+        "__macosx/x.png",
+    ])
+    def test_archive_junk_is_recognised(self, name):
+        from pathlib import Path as P
+        from src.ingest.codebrim import is_archive_junk
+        assert is_archive_junk(P(name)) is True
+
+    @pytest.mark.parametrize("name", [
+        "original_dataset/DSC_0042.jpg",
+        "original_dataset/sub/image_0001.png",
+    ])
+    def test_real_images_are_not_junk(self, name):
+        from pathlib import Path as P
+        from src.ingest.codebrim import is_archive_junk
+        assert is_archive_junk(P(name)) is False
+
+    def test_discovery_skips_junk_but_finds_real_images(self, tmp_path):
+        from src.ingest.codebrim import find_images
+
+        corpus = tmp_path / "codebrim"
+        (corpus / "original_dataset").mkdir(parents=True)
+        (corpus / "__MACOSX" / "original_dataset").mkdir(parents=True)
+        make_image(corpus / "original_dataset" / "DSC_0042.jpg")
+        # An AppleDouble stub: .jpg suffix, not a JPEG.
+        (corpus / "__MACOSX" / "original_dataset" / "._DSC_0042.jpg").write_bytes(b"\x00\x05\x16\x07junk")
+        (corpus / "original_dataset" / "._DSC_0043.jpg").write_bytes(b"\x00\x05\x16\x07junk")
+
+        _, images = find_images(root=tmp_path)
+        assert [p.name for p in images] == ["DSC_0042.jpg"]
+
+    def test_one_undecodable_image_does_not_abort_the_benchmark(self, tmp_path):
+        """A single bad file in 1,590 must not destroy a long run."""
+        corpus = tmp_path / "codebrim"
+        corpus.mkdir(parents=True)
+        good = make_textured_image(corpus / "good.png")
+        good.with_suffix(".xml").write_text(
+            "<annotation><object><name>crack</name><bndbox><xmin>10</xmin>"
+            "<ymin>10</ymin><xmax>200</xmax><ymax>200</ymax></bndbox></object></annotation>",
+            encoding="utf-8")
+        bad = corpus / "truncated.png"
+        bad.write_bytes(b"\x89PNG\r\n\x1a\n truncated")
+        bad.with_suffix(".xml").write_text(
+            "<annotation><object><name>crack</name><bndbox><xmin>1</xmin>"
+            "<ymin>1</ymin><xmax>9</xmax><ymax>9</ymax></bndbox></object></annotation>",
+            encoding="utf-8")
+
+        report = B.run(root=tmp_path, log=lambda *a: None)
+        assert report.images_scored == 1
+        assert report.images_skipped == 1
+        assert report.skipped_reasons["image could not be decoded"] == 1
+        # The failure is named in the rendered report, never silently zeroed.
+        assert "could not be decoded" in B.render(report)
+
+
 class TestAnnotationParsing:
     VOC = """<annotation>
       <filename>image_0001.jpg</filename>
