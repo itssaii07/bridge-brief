@@ -155,7 +155,7 @@ class TestUploadProvenance:
     def test_a_non_image_is_refused(self, tmp_path):
         conn = connect(":memory:")
         path = tmp_path / "notes.txt"
-        path.write_text("not a photo")
+        path.write_text("not a photo", encoding="utf-8")
         with pytest.raises(ValueError):
             uploads.ingest_upload(conn, "13450", path, upload_root=tmp_path / "u",
                                   log=lambda *a: None)
@@ -217,7 +217,7 @@ class TestAnnotationParsing:
 
     def test_voc_boxes_parse_with_classes_normalised(self, tmp_path):
         path = tmp_path / "a.xml"
-        path.write_text(self.VOC)
+        path.write_text(self.VOC, encoding="utf-8")
         boxes = B.parse_annotation_file(path)
         assert [(b.x, b.y, b.w, b.h) for b in boxes] == [(10, 20, 100, 120), (200, 50, 60, 70)]
         assert [b.defect_class for b in boxes] == ["crack", "spallation"]
@@ -225,13 +225,13 @@ class TestAnnotationParsing:
     def test_xywh_layout_also_parses(self, tmp_path):
         path = tmp_path / "a.xml"
         path.write_text("<annotation><object><name>crack</name>"
-                        "<x>5</x><y>6</y><w>7</w><h>8</h></object></annotation>")
+                        "<x>5</x><y>6</y><w>7</w><h>8</h></object></annotation>", encoding="utf-8")
         box = B.parse_annotation_file(path)[0]
         assert (box.x, box.y, box.w, box.h) == (5, 6, 7, 8)
 
     def test_an_unparseable_file_points_at_the_one_change_point(self, tmp_path):
         path = tmp_path / "a.xml"
-        path.write_text("<annotation><something/></annotation>")
+        path.write_text("<annotation><something/></annotation>", encoding="utf-8")
         with pytest.raises(DataUnavailable) as exc:
             B.parse_annotation_file(path)
         assert "parse_annotation_file" in str(exc.value)

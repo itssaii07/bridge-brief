@@ -181,9 +181,9 @@ class TestReviewSample:
             add_flag(conn, struct, "deck", 7)
         path = tmp_path / "review.csv"
         assert export_review_sample(conn, path, n=3) == 3
-        first = path.read_text()
+        first = path.read_text(encoding="utf-8")
         export_review_sample(conn, path, n=3)
-        assert path.read_text() == first            # same database, same sample
+        assert path.read_text(encoding="utf-8") == first            # same database, same sample
         assert "NBI-000001-2023-deck" in first or "NBI-00000" in first
         assert "verdict" in first.splitlines()[0]
 
@@ -191,7 +191,8 @@ class TestReviewSample:
         path = tmp_path / "review.csv"
         path.write_text(
             "finding_id,verdict (correct|incorrect)\n"
-            "F-a,correct\nF-b,correct\nF-c,incorrect\nF-d,\n"
+            "F-a,correct\nF-b,correct\nF-c,incorrect\nF-d,\n",
+            encoding="utf-8",
         )
         stats = read_review_labels(path)
         assert stats == {"labelled": 3, "correct": 2, "incorrect": 1, "unlabelled": 1,
@@ -199,7 +200,7 @@ class TestReviewSample:
 
     def test_precision_is_none_when_nothing_has_been_labelled(self, tmp_path):
         path = tmp_path / "review.csv"
-        path.write_text("finding_id,verdict (correct|incorrect)\nF-a,\n")
+        path.write_text("finding_id,verdict (correct|incorrect)\nF-a,\n", encoding="utf-8")
         assert read_review_labels(path)["contradiction_precision"] is None
 
     def test_missing_review_file_explains_how_to_make_one(self, tmp_path):

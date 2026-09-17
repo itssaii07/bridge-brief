@@ -394,3 +394,13 @@ if a mock-data generator appears in `src/`.
 **L10. The module boundary is enforced by a test, not by good intentions.**
 `tests/test_invariants.py` fails if the ingest layer imports from generation, or if the
 analysis layer imports from generation or the UI.
+
+**L11. All text I/O names its encoding explicitly, and a test enforces it.**
+`Path.read_text()` and `open()` without an `encoding` use the platform default — UTF-8
+on Linux and macOS, **cp1252 on Windows**. Every document in this repository contains
+non-ASCII characters, so code relying on the default reads fine on one machine and
+raises `UnicodeDecodeError` on another. Python 3.15 will make UTF-8 the default, but
+this project supports 3.10, so it cannot wait for that. `src/` was explicit from the
+start; the test suite was not, and failed on Windows. It is now, and
+`tests/test_invariants.py::TestPortableTextIO` walks the AST of `src/`, `tests/` and
+`scripts/` and fails if any text-I/O call omits an encoding.
