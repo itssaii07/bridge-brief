@@ -1,0 +1,18 @@
+# Runtime: the core pipeline (ingest, contradiction engine, brief generation,
+# review UI) depends on the Python standard library only. sqlite3, xml.etree,
+# csv, http.server and json cover everything it needs, so the project runs on a
+# bare interpreter. Optional extras below are each guarded by a defensive import
+# that reports what is missing instead of raising ImportError.
+
+# -- Optional: imagery (milestones 5 and 6) -----------------------------------
+# Needed only for photo tiling and the CODEBRIM benchmark. Without it the
+# imagery paths report "Pillow is not installed" and the rest still works.
+Pillow>=10.0 ; extra == "imagery"
+
+# -- Optional: LLM-assisted sentence drafting (milestone 7) --------------------
+# The grounding gate is deterministic code and never depends on this. The
+# default drafter is a deterministic template drafter that needs no API key.
+anthropic>=0.40 ; extra == "llm"
+
+# -- Development ---------------------------------------------------------------
+pytest>=8.0 ; extra == "dev"
