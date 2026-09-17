@@ -1,5 +1,17 @@
 # Handoff — what to do when the data arrives
 
+> ## This runbook has been followed. See `info.md` for the results.
+>
+> The data arrived, every step below was run against it, and five things needed fixing.
+> The notes marked **[RAN]** record what actually happened at each step, so this file
+> stays useful as a rebuild guide rather than becoming a historical document.
+>
+> Expect **341 passed**, not the 286 written below.
+>
+> If you are rebuilding from scratch, follow it as written — ingest is idempotent and
+> artifact IDs are deterministic, so a rebuilt index is equivalent in every ID a brief
+> could have cited.
+
 Written to be followed without reading the code. Each step says where files go, what
 command to run, what you should see, and what to send me if it goes wrong.
 
@@ -15,7 +27,7 @@ python -m pip install -e ".[dev,imagery]"
 python -m pytest -q
 ```
 
-**Expect:** `286 passed`. These tests touch no data and must pass before you start.
+**Expect:** `341 passed`. These tests touch no data and must pass before you start.
 If they do not, stop and send me the pytest output — the pipeline is not worth running
 against a broken build.
 
@@ -60,6 +72,11 @@ failure, and it is deliberate — the loader will not guess which column holds t
 rating. The error lists the headers it actually saw. **Send me that whole error
 message.** The fix is one table, `FIELDS` in `src/ingest/nbi.py`.
 
+> **[RAN]** It did not stop. Every column resolved with no edit to `FIELDS`: the real
+> header row is `STATE_CODE_001,STRUCTURE_NUMBER_008,...,DECK_COND_058,...`, so the
+> item-number-first synonym strategy worked. 621,581 rows for 2023 and 624,193 for 2025,
+> **0 rejected**, both decoding as UTF-8 on the first attempt.
+
 **If it reports a large number of rejected rows:** run step 4 and look at the rejection
 summary before continuing. A few thousand rejections across 624k rows is normal
 (blank structure numbers); hundreds of thousands is a format problem.
@@ -95,6 +112,16 @@ PY
 The first 4,000 bytes of one real file is enough. The fix is confined to
 `extract_elements` and the tag-name lists directly above it in `src/ingest/nbe.py`.
 
+> **[RAN]** This is the step that broke, as predicted, and the fix was where predicted.
+> The real files are **flat**, not nested: a `<FHWAELEMENT>` root of repeated `<FHWAED>`
+> records, each carrying its own `STATE`, `STRUCNUM`, `EN`, `TOTALQTY` and `CS1..CS4`,
+> with no units field. One entry -- `fhwaed` -- added to `ELEMENT_TAGS`; every other
+> candidate list already matched. All six state-year extracts have the identical shape.
+> 66,597 records for 2023 and 55,905 for 2025, **0 rejected**.
+>
+> A misnamed state directory now fails loudly instead of quietly, since the records
+> declare their own state and it is checked against the directory name.
+
 ---
 
 ## 4. See what you actually have
@@ -110,6 +137,21 @@ on), and a per-state breakdown for AL, AZ and IA. Then a rejected-rows-by-reason
 **This is the milestone 1–2 gate.** The number that matters is *structures with both*.
 If it is zero while both sources ingested fine, the join key is not matching — send me
 the per-state table and I will look at the normalisation.
+
+> **[RAN]** It was not zero, but the per-state table was still wrong, and that is what
+> caught the real bug. Alabama reported 3,301 structures against 16,176 rows in the file.
+> **NBI item 8 is unique only within a state**: 40,374 numbers in the 2023 file are
+> claimed by more than one state, and 112,836 rows had collapsed onto another state's
+> bridge. The engine would have compared one state's elements against another state's
+> ratings and reported the collision as a finding.
+>
+> The join key is now state-qualified (`AL013450`), which changed every artifact ID -- a
+> deviation from the form CLAUDE.md documents, recorded in ASSUMPTIONS.md B5. After the
+> fix the per-state NBI counts match the raw file exactly (AL 16,176, AZ 8,544,
+> IA 23,720) and **10,661 of 10,662** NBE structures in 2023 join to an NBI record.
+>
+> **Do not skip this check on a rebuild.** A wrong join key here is invisible
+> downstream: every later number looks plausible and means nothing.
 
 Also run this now, to commit real record shapes for review:
 
@@ -136,6 +178,16 @@ and the whole tunable surface is the constants block at the top of
 `src/analysis/contradictions.py`. `MIN_TOTAL_QTY` is the one I would touch first
 (ASSUMPTIONS.md F5). **Send me the summary table and I will suggest values.**
 
+> **[RAN]** 7,018 contradictions over 10,661 structures -- 43.6% of structures, which
+> looks too loose. 81% of findings are one pattern: NBI "fair" against near-pristine
+> elements, one band, NBI-pessimistic.
+>
+> **No threshold was changed.** Step 6 was run first, on the untuned engine, and that
+> pattern turns out to be predictive at 3.46x, p < 1e-12. Tightening it would have thrown
+> away a real signal to make the count look reasonable. Run step 6 before touching
+> anything here (ASSUMPTIONS.md F11). `MIN_TOTAL_QTY = 100` is barely binding in any
+> case: the 1st percentile of flagged total quantity is 120, the median 2,044.
+
 Then try a quick look at a single structure before committing to a full run:
 
 ```bash
@@ -158,6 +210,23 @@ structures, and the **lift** between them — followed by an interpretation line
 predictive information on this data, the report will say so plainly, and that is the
 honest result to write up. A positive lift is an association on published records, not
 a causal claim and not a safety judgement.
+
+> **[RAN]** This step had a bug that inverted its own conclusion. The control measured
+> only the *drop* rate, but an NBI-pessimistic flag is confirmed by a *rise*, and 81% of
+> flags are pessimistic. It reported **lift = -1.8%** and "the flags carry no predictive
+> information". That was false.
+>
+> Each direction is now scored against the base rate for the movement it predicts. The
+> two differ by an order of magnitude on real records (5.9% drop vs 0.6% rise):
+>
+> | direction | flags | align | base | lift | ratio | significance |
+> |---|---|---|---|---|---|---|
+> | `nbi_optimistic` | 1,304 | 12.6% | 5.9% | **+6.7%** | 2.14x | z = 9.47, p < 1e-12 |
+> | `nbi_pessimistic` | 5,714 | 2.2% | 0.6% | **+1.6%** | 3.46x | z = 10.14, p < 1e-12 |
+> | pooled | 7,018 | 4.1% | 1.6% | **+2.5%** | | |
+>
+> **Read the per-direction rows before the pooled one.** The pooled figure is dominated
+> by whichever direction has more flags, which is how the original error stayed hidden.
 
 To get contradiction *precision*, a human has to look at some flags:
 
@@ -193,6 +262,22 @@ says so in as many words. Swapping in a trained model means implementing
 **If the benchmark skips every image with `no annotation file found`,** the annotation
 layout differs from what I assumed. Send me one real annotation file; the fix is
 `parse_annotation_file` in `src/eval/codebrim_benchmark.py`.
+
+> **[RAN]** Milestone 6 is **not run**, and neither is milestone 5 -- no inspection
+> photographs were supplied.
+>
+> The CODEBRIM diagnosis in circulation was wrong. The archive is **not encrypted** (0 of
+> 2,766 members have the encryption bit set) and its MD5 matches Zenodo exactly. Its own
+> central directory records local-header offsets up to 277 MB past the end of the file --
+> a 32-bit offset overflow in a ZIP64 archive. **Re-downloading will not help and a
+> password is not the issue.** Recover with `7z x` or `zip -FF`, not by emailing the
+> authors.
+>
+> All 1,057 annotations and 839 of 1,700 images are readable, which was enough to verify
+> the annotation format at last: the geometry assumption is exactly right, but `<name>`
+> is the constant `"defect"` on every box and the real classes are **multi-label** flags
+> in a sibling `<Defect>` element. The matching rule assumes one class per box, so it
+> needs reworking before a class-aware number means anything (ASSUMPTIONS.md H7).
 
 ---
 
@@ -242,6 +327,12 @@ Two rows to read carefully:
 * `source_link_resolution` should be exactly `1.0`. It is 1.0 by construction when the
   grounding gate is working. **Anything below 1.0 is a bug report, not a measurement** —
   send it to me.
+
+> **[RAN]** It is exactly `1.0`, and `unsupported_content_rate` is `0.0` on the generated
+> brief. 10 of 15 metrics computed; the five that are not each name the reason and the
+> command that would fill them. The base-rate row is now the direction-matched pooled
+> rate, because the old one printed 5.9% beside a 2.5% lift on a 4.1% alignment and did
+> not subtract to it.
 * `predictive_lift` is the real result of the project. `predictive_alignment` on its
   own, without the control rate beside it, means nothing.
 

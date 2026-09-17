@@ -2,8 +2,21 @@
 
 Snapshot of where this project stands: what the problem is, what has been built, and
 what still has to happen. The short version is that **all nine milestones are
-implemented and 300 tests pass, and everything that remains is blocked on the datasets
-not yet being on disk.**
+implemented, 341 tests pass, and the pipeline has now been run end to end against the
+real published federal data.** Milestones 1–4 and 7–9 produced measured results;
+milestones 5–6 are unrun because no inspection photographs were supplied and the
+CODEBRIM archive is malformed as published (ASSUMPTIONS.md H6).
+
+### The headline result
+
+A bridge component whose 2023 NBE element data showed deterioration its 2023 NBI
+condition rating did not reflect was **2.14 times more likely to be officially
+downgraded in the 2025 NBI release** than an unflagged component with the same two
+sources available — 12.6% against a 5.9% control base rate, over 1,268 flagged and
+17,652 control components, z = 9.47, p < 1e-12.
+
+An association on published federal records. Not a causal claim, not a statement about
+any individual bridge, and not a safety judgement.
 
 ---
 
@@ -79,19 +92,34 @@ convention, and `tests/test_invariants.py` guards them at the repository level.
 
 ## What is done
 
-All nine milestones, one commit each, 300 tests passing. No test touches `data/`.
+All nine milestones, 341 tests passing. No test touches `data/`.
 
-| # | Scope | State |
-|---|---|---|
-| 1 | Schema, artifact ID system, scaffolding | Done, runnable |
-| 2 | NBI + NBE ingest, coverage catalogue | Done, **unrun** |
-| 3 | **Contradiction engine** | Done, **unrun** |
-| 4 | **2025 validation pass** | Done, **unrun** |
-| 5 | Photo upload + detector | Done, **unrun** |
-| 6 | CODEBRIM benchmark | Done, **unrun** |
-| 7 | Brief generation + grounding gate | Done, runnable |
-| 8 | Review UI + sign-off trail | Done, runnable |
-| 9 | Eval harness | Done, runnable |
+| # | Scope | State | What it measured |
+|---|---|---|---|
+| 1 | Schema, artifact ID system, scaffolding | Done | — |
+| 2 | NBI + NBE ingest, coverage catalogue | **Run** | 621,581 + 624,193 NBI rows, 0 rejected; 66,597 + 55,905 NBE records, 0 rejected; **10,661 structures with both sources in 2023** |
+| 3 | **Contradiction engine** | **Run** | 7,018 contradictions over 10,661 structures (43.6% of structures), plus 16,247 corroborated and 1,548 single-source findings |
+| 4 | **2025 validation pass** | **Run** | optimistic flags **2.14x**, pessimistic **3.46x**, both p < 1e-12; pooled lift +2.5% |
+| 5 | Photo upload + detector | Unrun | no inspection photographs supplied |
+| 6 | CODEBRIM benchmark | Unrun | archive malformed as published (H6); harness reports `n/a` with the reason |
+| 7 | Brief generation + grounding gate | **Run** | `source_link_resolution` exactly **1.0**; 0 blocked on the generated brief |
+| 8 | Review UI + sign-off trail | **Run** | serves the real index; landing page 113ms, click-to-evidence resolves to the source ZIP member |
+| 9 | Eval harness | **Run** | 10 of 15 metrics computed; the other 5 each name the reason and the command |
+
+### What running it against real data changed
+
+Five things were wrong, none of them findable without the data:
+
+1. **The NBE parser** assumed nested structures. The real files are flat `<FHWAED>`
+   records. One entry in `ELEMENT_TAGS` — the change point the module docstring named.
+2. **The join key was not unique.** NBI item 8 repeats across states; 40,374 numbers in
+   the 2023 file are claimed by more than one state, collapsing 112,836 rows onto another
+   state's bridge. The key is now state-qualified, which changed every artifact ID.
+3. **The validation comparator was wrong**, scoring upgrade-predicting flags against a
+   downgrade base rate. It reported "no predictive information" when there was a strong
+   signal in both directions.
+4. **The UI landing page was O(structures)** and never loaded on 632,140 of them.
+5. **The CODEBRIM diagnosis was wrong** — malformed archive, not an encrypted one.
 
 ### Milestone detail
 
@@ -148,81 +176,70 @@ are never confused.
 
 ## What still needs to happen
 
-**Nothing is blocked on code. Everything is blocked on the datasets.** `data/` does not
-exist in this repository, and no mock, sample, placeholder or example file was ever
-created under it — that was the single most important rule of the build. Running any
-ingest command right now reports the absence, exits `2`, and leaves nothing behind.
+The datasets are on disk and ingested; `data/` is gitignored in full and nothing under it
+was ever created by this project. Three things remain, and all three need a person rather
+than a run:
 
-### 1. Add the datasets
+### 1. Contradiction precision — needs a human labeller
 
-```
-data/raw/nbi/2023/        NBI 2023 delimited .txt/.csv, all states (~624k records)
-data/raw/nbi/2025/        NBI 2025, same
-data/raw/nbe/2023/AL/     Alabama 2023 element data (.zip — leave it zipped)
-data/raw/nbe/2023/AZ/     Arizona 2023
-data/raw/nbe/2023/IA/     Iowa 2023
-data/raw/nbe/2025/AL/     and the same three for 2025
-data/raw/nbe/2025/AZ/
-data/raw/nbe/2025/IA/
-data/raw/codebrim/        CODEBRIM original images + annotation files
+The only metric the harness refuses to compute for itself (ASSUMPTIONS.md J3). A
+deterministic sample of 50 flags is already exported to `reviews/sample.csv`, each row
+carrying the artifact IDs on both sides so a flag can be checked against the source
+records without opening the code:
+
+```bash
+#  ... open reviews/sample.csv, fill the `verdict` column with correct / incorrect ...
+python -m src.analysis.validate --read-review reviews/sample.csv
+python -m src.eval.run_all --review reviews/sample.csv --json reports/metrics.json
 ```
 
-| Source | Where to get it |
-|---|---|
-| NBI 2023, 2025 | <https://www.fhwa.dot.gov/bridge/nbi/ascii.cfm> — the delimited file for each year, all states |
-| NBE 2023, 2025 | <https://www.fhwa.dot.gov/bridge/nbi/elements.cfm> — one ZIP per state per year (AL, AZ, IA) |
-| CODEBRIM | <https://zenodo.org/record/2620293> — original images and annotations |
+Worth knowing before labelling: 77 of the 1,304 NBI-optimistic flags were raised by
+`ABS_DETERIORATED_QTY` alone, and the published extracts carry **no units**, so that rule
+is dimensionally unsound (ASSUMPTIONS.md F10). Those 77 are the flags least likely to
+survive review.
 
-Two things that matter:
+### 2. Correction effort — needs a reviewer in the UI
 
-* **The state subdirectory name is where the NBE parser gets the state from.** Getting
-  `AL` / `AZ` / `IA` right is not cosmetic.
-* **Leave the NBE ZIPs zipped.** They are read in place, because `data/raw/` is treated
-  as immutable and nothing will ever unpack into it. If the NBI download arrives as a
-  ZIP, unpack that one into its year directory.
+`correction_effort_edits_per_finding` reads review actions, and no finding has been
+reviewed yet. Start the UI, approve/edit/reject some findings and sign off:
 
-`data/` is gitignored in full. Nothing from it is ever committed.
+```bash
+python -m src.ui.server        # http://127.0.0.1:8765
+```
 
-### 2. Then, in order
+### 3. Milestones 5 and 6 — blocked on inputs, not on code
 
-1. **Ingest and check the join.** `python -m src.catalog --record-missing`. The number
-   that matters is *structures with both sources* — that is the population the engine can
-   run on. Zero there, with both sources ingesting cleanly, means the join key is not
-   matching.
-2. **Commit real record shapes.** `python -m scripts.extract_samples --year 2023` pulls a
-   handful of genuine records into `samples/` for review. That directory is deliberately
-   empty right now — inventing a "representative" record would have been the worst kind
-   of fabrication, since it would then be read as the authority on record shape.
-3. **Tune the contradiction thresholds.** They are set from judgement, not from real
-   distributions. Too tight flags nothing; too loose flags everything. Both are tuning
-   problems, not bugs, and the whole surface is one constants block at the top of
-   `src/analysis/contradictions.py`. `MIN_TOTAL_QTY` first.
-4. **Get contradiction precision.** Requires a human labelling a sample —
-   `--export-review`, fill the verdict column, `--read-review`.
-5. **Delete the "⚠️ CURRENT STATUS — the data is NOT on disk yet" block from
-   `CLAUDE.md`** once the coverage table looks right. Leaving it would make the next
-   reader think there is still nothing to run.
-
-`HANDOFF.md` walks all of this step by step — what to run, what output to expect at each
-step, how to read the result, and exactly what to send back when a step fails.
+Milestone 5 needs real inspection photographs for a structure that has a contradiction;
+it does **not** need CODEBRIM. Milestone 6 needs a readable CODEBRIM archive: the one on
+disk is malformed as published and the recovery path is `7z x` or `zip -FF`, not a
+password (ASSUMPTIONS.md H6). If it is recovered, H7 also has to be addressed — the
+ground truth is multi-label and the matching rule assumes one class per box.
 
 ---
 
-## Top three things most likely to need fixing on real data
+## How the three predicted risks turned out
 
-1. **The NBE XML parser.** Written against the published structure without ever seeing a
-   real file. It is namespace-agnostic and handles both condition-state layouts, but the
-   tag names are educated guesses. The fix is confined to
-   `src/ingest/nbe.py::extract_elements` and the tag-candidate lists above it;
-   `HANDOFF.md` step 3 says exactly which 4,000 bytes to send. If it fails it fails
-   **loudly** — an unparsed file must never masquerade as a structure with no elements,
-   because that would corrupt the missing-evidence metric.
-2. **`MIN_TOTAL_QTY` and the band thresholds.** Judgement, not data. This is the single
-   threshold most in need of tuning against real distributions.
-3. **`ABS_DETERIORATED_QTY = 250`.** The rule that makes the documented example work, but
-   it compares an absolute quantity against whatever units the source publishes, so it is
-   only meaningful for area-scaled elements. A real weakness of the rule, flagged rather
-   than hidden.
+The three things flagged before the data arrived as most likely to need fixing:
+
+1. **The NBE XML parser** — *needed fixing, exactly where predicted.* The format guess was
+   wrong (flat, not nested) and the fix was one entry in `ELEMENT_TAGS`, inside the change
+   point the module docstring named. Confining the assumption to one function paid for
+   itself.
+2. **`MIN_TOTAL_QTY` and the band thresholds** — *not changed, and deliberately so.* The
+   engine flags 43.6% of structures, which looked too loose, and 81% of findings are a
+   single NBI-pessimistic pattern that looked like the obvious thing to suppress. Running
+   the validation pass first showed that pattern is predictive at 3.46x, p < 1e-12.
+   Tightening it would have destroyed a real signal to make a count look reasonable. No
+   threshold has moved from its pre-data value (ASSUMPTIONS.md F11). `MIN_TOTAL_QTY = 100`
+   turns out to be barely binding: the 1st percentile of flagged total quantity is 120.
+3. **`ABS_DETERIORATED_QTY = 250`** — *worse than the hedge admitted.* The extracts publish
+   **no units field at all**, so the constant compares 250 against a bare number whose
+   dimension varies by element. It raised 77 of 1,304 optimistic flags on its own, so it is
+   not load-bearing for the result, but it is not defensible as written (F10).
+
+The one risk that was **not** anticipated is the one that mattered most: the structure
+join key was not nationally unique, and nothing in the pre-data test suite could have
+caught it, because both colliding states publish the same spelling of the same number.
 
 Every decision the specification did not settle is in `ASSUMPTIONS.md`, sections A–L,
 with the single change point named for each format guess.
@@ -233,7 +250,7 @@ with the single change point named for each format guess.
 
 ```bash
 python -m pip install -e ".[dev,imagery]"   # needs Python 3.10 or newer
-python -m pytest -q                      # 300 passed — none touch data/
+python -m pytest -q                      # 341 passed — none touch data/
 
 python -m src.ingest.nbi --year 2023 --year 2025
 python -m src.ingest.nbe --year 2023 --year 2025
@@ -242,7 +259,7 @@ python -m src.catalog --record-missing
 python -m src.analysis.contradictions --year 2023
 python -m src.analysis.validate
 
-python -m src.generate.brief --structure 013450 --year 2023 --print
+python -m src.generate.brief --structure AL012757 --year 2023 --print
 python -m src.ui.server                  # http://127.0.0.1:8765
 
 python -m src.eval.run_all
