@@ -1,7 +1,11 @@
-"""Detector benchmark against the CODEBRIM annotations.
+"""Detector benchmark against a reference corpus's annotations.
 
 Reports precision, recall and F1 for the configured detector over the reference
-corpus. Ready to run; unrun, because the corpus is not on disk.
+corpus. Two corpora are supported, selected with ``--corpus``:
+
+* **dacl10k** (the default) — real bridge-inspection imagery, labelme polygons
+* **codebrim** — the corpus CLAUDE.md specifies, whose published archive is
+  malformed and currently unusable (ASSUMPTIONS.md H6)
 
 Two scores are reported for every run:
 
@@ -21,8 +25,14 @@ settings and the threshold is a named constant.
 ## The format assumption
 
 ``parse_annotation_file`` is the single change point for the annotation layout
-(ASSUMPTIONS.md H4). It expects Pascal-VOC-style per-image XML, is namespace- and
-case-insensitive, and accepts either ``xmin/ymin/xmax/ymax`` or ``x/y/w/h``.
+(ASSUMPTIONS.md H4, H6b, H7). It dispatches on file extension: ``.json`` for
+labelme-style polygons, ``.xml`` for Pascal-VOC-style boxes. The XML path is
+namespace- and case-insensitive and accepts either ``xmin/ymin/xmax/ymax`` or
+``x/y/w/h``; the JSON path reduces each polygon to its bounding box.
+
+Non-damage classes — the component classes dacl10k annotates alongside damage —
+are dropped at parse time. Scoring a bearing as a defect the detector missed
+would count things that are not defects as false negatives.
 """
 
 from __future__ import annotations
@@ -56,12 +66,51 @@ CLASS_ALIASES = {
     "corrosionstain": "corrosion_stain",
     "corrosion_stain": "corrosion_stain",
     "rust": "corrosion_stain",
+    # dacl10k spellings. Where a dacl10k class names the same damage as a
+    # CODEBRIM class it is folded onto the CODEBRIM name, so a benchmark run over
+    # either corpus reports the same vocabulary. Classes with no CODEBRIM
+    # counterpart (alligator crack, wetspot, rockpocket, hollowareas, cavity,
+    # weathering, restformwork, graffiti) are deliberately absent and fall
+    # through to their own verbatim name.
+    "exposedrebars": "exposed_bars",
+    "exposedrebar": "exposed_bars",
+    "acrack": "alligator_crack",
+    "alligatorcrack": "alligator_crack",
 }
+
+#: Classes that describe a bridge *component* rather than damage to one.
+#:
+#: dacl10k annotates 19 classes: 13 kinds of damage and 6 objects. The objects
+#: are what the structure is made of, not what is wrong with it, and the detector
+#: is not looking for them. Counting an annotated bearing as a defect the detector
+#: missed would inflate false negatives with things that are not defects at all —
+#: the same reasoning that excludes protective-system elements from the
+#: contradiction engine's component roll-ups (ASSUMPTIONS.md E3).
+#:
+#: Verified against the labels actually present in the published annotations, not
+#: taken from the paper alone.
+NON_DAMAGE_CLASSES = frozenset({
+    "bearing",
+    "ejoint", "expansionjoint",
+    "drainage",
+    "pequipment", "protectiveequipment",
+    "jtape", "jointtape",
+    "wconccor", "washoutsconcretecorrosion",
+})
+
+
+def _class_key(name: str | None) -> str:
+    return re.sub(r"[^a-z]", "", str(name or "").lower())
+
+
+def is_non_damage(name: str | None) -> bool:
+    """True for a class that names a component rather than damage to one."""
+    return _class_key(name) in NON_DAMAGE_CLASSES
 
 
 def normalise_class(name: str | None) -> str:
     """Map a published annotation class name to our vocabulary, or keep it as-is."""
-    key = re.sub(r"[^a-z]", "", str(name or "").lower())
+    key = _class_key(name)
     return CLASS_ALIASES.get(key, str(name or "").strip().lower() or "unlabelled")
 
 
@@ -82,8 +131,54 @@ def _child_text(node: ET.Element, names: tuple[str, ...]) -> str | None:
     return None
 
 
+def parse_labelme_json(path: Path) -> list[Detection]:
+    """Parse a labelme-style JSON annotation, as dacl10k publishes.
+
+    dacl10k is a *segmentation* dataset: each shape is a polygon, not a box. This
+    benchmark scores localisation by IoU over boxes, so every polygon is reduced
+    to its axis-aligned bounding box — the tightest box containing the points.
+
+    That reduction is lossy in the detector's favour and the report says so: a
+    polygon's bounding box is always at least as large as the polygon, so a
+    detection that overlaps the box but not the damage can still score as a hit.
+    It is the standard way to use a segmentation set for detection, and the
+    alternative — scoring mask IoU — would measure a different thing from what
+    the shipped region-based detector produces.
+
+    Non-damage classes are dropped here (see :data:`NON_DAMAGE_CLASSES`).
+    """
+    try:
+        payload = json.loads(Path(path).read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+        raise DataUnavailable(f"cannot parse annotation file {path}: {exc}") from exc
+
+    boxes: list[Detection] = []
+    for shape in payload.get("shapes") or []:
+        label = shape.get("label")
+        if is_non_damage(label):
+            continue
+        points = shape.get("points") or []
+        xs = [float(p[0]) for p in points if len(p) >= 2]
+        ys = [float(p[1]) for p in points if len(p) >= 2]
+        if len(xs) < 2 or len(ys) < 2:
+            continue
+        x, y = int(min(xs)), int(min(ys))
+        w, h = int(max(xs)) - x, int(max(ys)) - y
+        if w <= 0 or h <= 0:
+            continue
+        boxes.append(Detection(x=x, y=y, w=w, h=h,
+                               defect_class=normalise_class(label), confidence=1.0))
+    return boxes
+
+
 def parse_annotation_file(path: Path) -> list[Detection]:
     """**The single annotation-format change point.** Parse one annotation file.
+
+    Two layouts are supported, chosen by file extension:
+
+    * ``.json`` — labelme-style polygons (dacl10k), via :func:`parse_labelme_json`
+    * ``.xml``  — Pascal-VOC-style boxes (CODEBRIM), namespace- and
+      case-insensitive, accepting either ``xmin/ymin/xmax/ymax`` or ``x/y/w/h``
 
     Ground-truth boxes are returned as :class:`Detection` objects with
     ``confidence = 1.0``, purely so that one geometry type is used on both sides
@@ -94,12 +189,25 @@ def parse_annotation_file(path: Path) -> list[Detection]:
         DataUnavailable: if the file contains no parseable object boxes, so that a
             format mismatch is reported rather than scored as "no defects".
     """
+    path = Path(path)
+    if path.suffix.lower() == ".json":
+        boxes = parse_labelme_json(path)
+        if not boxes:
+            raise DataUnavailable(
+                f"{path} yielded no damage polygons.\n"
+                "Either it annotates only non-damage classes, or the assumed "
+                "labelme layout (ASSUMPTIONS.md H6b) does not match. Fix "
+                "src/eval/codebrim_benchmark.py::parse_labelme_json — that is the "
+                "only place that needs to change."
+            )
+        return boxes
+
     try:
-        root = ET.fromstring(Path(path).read_bytes())
+        root = ET.fromstring(path.read_bytes())
     except ET.ParseError as exc:
         raise DataUnavailable(f"cannot parse annotation file {path}: {exc}") from exc
 
-    boxes: list[Detection] = []
+    boxes = []
     for node in root.iter():
         if _local(node.tag) not in ("object", "defect", "annotationobject"):
             continue
@@ -161,6 +269,9 @@ class Scores:
 class BenchmarkReport:
     detector: str
     iou_threshold: float
+    #: Which reference corpus was scored. Recorded because the class-aware score
+    #: is only comparable between runs over the same corpus.
+    corpus: str = "dacl10k"
     images_scored: int = 0
     images_skipped: int = 0
     detections: int = 0
@@ -195,36 +306,88 @@ def match(detections: list[Detection], annotations: list[Detection], *,
     return scores
 
 
-def find_annotation(image_path: Path, root: Path) -> Path | None:
+#: Annotation file extensions, in the order they are preferred for one image.
+ANNOTATION_SUFFIXES = (".xml", ".json")
+
+
+def build_annotation_index(root: Path) -> dict[str, Path]:
+    """Map image stem -> annotation path, by walking the corpus once.
+
+    Corpora do not agree on where annotations live: CODEBRIM puts them beside the
+    images, dacl10k puts them in a parallel ``annotations/{split}/`` tree. The
+    original lookup handled that with an ``rglob`` per image, which is O(images x
+    files) — on dacl10k's 7,910 images over ~17,000 files that is the difference
+    between a benchmark that finishes and one that appears to hang.
+    """
+    index: dict[str, Path] = {}
+    for path in root.rglob("*"):
+        if not path.is_file() or path.suffix.lower() not in ANNOTATION_SUFFIXES:
+            continue
+        # First suffix in ANNOTATION_SUFFIXES wins, so a corpus carrying both
+        # layouts resolves deterministically rather than by walk order.
+        existing = index.get(path.stem)
+        if existing is None or (ANNOTATION_SUFFIXES.index(path.suffix.lower())
+                                < ANNOTATION_SUFFIXES.index(existing.suffix.lower())):
+            index[path.stem] = path
+    return index
+
+
+def find_annotation(image_path: Path, root: Path,
+                    index: dict[str, Path] | None = None) -> Path | None:
     """Locate the annotation file for an image.
 
-    Tries the image's own stem with an ``.xml`` suffix beside it, then the same
-    stem anywhere under the corpus root.
+    Tries a sibling with each known annotation suffix, then the corpus index.
+    ``index`` is built once per run by :func:`build_annotation_index`; without it
+    this falls back to a walk, which is correct but slow.
     """
-    sibling = image_path.with_suffix(".xml")
-    if sibling.exists():
-        return sibling
-    matches = list(root.rglob(f"{image_path.stem}.xml"))
-    return matches[0] if matches else None
+    for suffix in ANNOTATION_SUFFIXES:
+        sibling = image_path.with_suffix(suffix)
+        if sibling.exists():
+            return sibling
+    if index is None:
+        index = build_annotation_index(root)
+    return index.get(image_path.stem)
+
+
+#: Corpora this benchmark can run over, by slug.
+CORPORA = ("dacl10k", "codebrim")
+
+
+def _discover(corpus: str, root: Path | None):
+    """Locate a corpus's images, whichever corpus it is."""
+    if corpus == "dacl10k":
+        from ..ingest.dacl10k import find_images
+    elif corpus == "codebrim":
+        from ..ingest.codebrim import find_images
+    else:
+        raise DataUnavailable(
+            f"unknown corpus {corpus!r}; expected one of {', '.join(CORPORA)}")
+    return find_images(root)
 
 
 def run(*, root: Path | None = None, detector_name: str = "baseline",
-        limit: int | None = None, log=print) -> BenchmarkReport:
-    """Run the detector over the corpus and score it. Requires the corpus on disk."""
-    from ..ingest.codebrim import find_images
+        corpus: str = "dacl10k", limit: int | None = None,
+        log=print) -> BenchmarkReport:
+    """Run the detector over a reference corpus and score it.
 
-    directory, images = find_images(root)
+    Defaults to dacl10k, because the CODEBRIM archive is unusable as published
+    (ASSUMPTIONS.md H6). Pass ``corpus="codebrim"`` once it has been recovered.
+    """
+    directory, images = _discover(corpus, root)
     if limit is not None:
         images = images[:limit]
 
     detector = get_detector(detector_name)
     report = BenchmarkReport(detector=f"{detector.name}@{detector.version}",
-                             iou_threshold=IOU_THRESHOLD)
+                             iou_threshold=IOU_THRESHOLD, corpus=corpus)
     per_class: dict[str, Scores] = {}
 
-    log(f"benchmarking {detector.name} over {len(images):,} CODEBRIM image(s)")
+    log(f"indexing annotations under {directory}")
+    annotation_index = build_annotation_index(directory)
+    log(f"  {len(annotation_index):,} annotation file(s) found")
+    log(f"benchmarking {detector.name} over {len(images):,} {corpus} image(s)")
     for index, image_path in enumerate(images, start=1):
-        annotation_path = find_annotation(image_path, directory)
+        annotation_path = find_annotation(image_path, directory, annotation_index)
         if annotation_path is None:
             report.images_skipped += 1
             report.skipped_reasons["no annotation file found"] = \
@@ -322,7 +485,12 @@ def render(report: BenchmarkReport) -> str:
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Benchmark the detector against CODEBRIM.")
+    parser = argparse.ArgumentParser(
+        description="Benchmark the detector against a reference corpus.")
+    parser.add_argument("--corpus", default="dacl10k", choices=CORPORA,
+                        help="reference corpus to score against (default: dacl10k; "
+                             "the published CODEBRIM archive is unusable, see "
+                             "ASSUMPTIONS.md H6)")
     parser.add_argument("--raw-root", default=None)
     parser.add_argument("--detector", default="baseline")
     parser.add_argument("--limit", type=int, default=None)
@@ -331,7 +499,8 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         report = run(root=Path(args.raw_root) if args.raw_root else None,
-                     detector_name=args.detector, limit=args.limit)
+                     detector_name=args.detector, corpus=args.corpus,
+                     limit=args.limit)
     except (DataUnavailable, DetectorUnavailable) as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 2

@@ -4,6 +4,8 @@ Images used here are generated in the test's own tmp_path — never under data/ 
 and exist only to exercise geometry and bookkeeping.
 """
 
+import json
+
 import pytest
 
 from src.db import DataUnavailable, connect
@@ -264,7 +266,7 @@ class TestArchiveJunk:
             "<ymin>1</ymin><xmax>9</xmax><ymax>9</ymax></bndbox></object></annotation>",
             encoding="utf-8")
 
-        report = B.run(root=tmp_path, log=lambda *a: None)
+        report = B.run(root=tmp_path, corpus="codebrim", log=lambda *a: None)
         assert report.images_scored == 1
         assert report.images_skipped == 1
         assert report.skipped_reasons["image could not be decoded"] == 1
@@ -343,9 +345,265 @@ class TestMatching:
 class TestBenchmarkWithoutData:
     def test_missing_corpus_reports_where_it_goes(self, tmp_path):
         with pytest.raises(DataUnavailable) as exc:
-            B.run(root=tmp_path, log=lambda *a: None)
+            B.run(root=tmp_path, corpus="codebrim", log=lambda *a: None)
         assert "CODEBRIM" in str(exc.value)
+
+    def test_missing_dacl10k_reports_where_it_goes(self, tmp_path):
+        with pytest.raises(DataUnavailable) as exc:
+            B.run(root=tmp_path, corpus="dacl10k", log=lambda *a: None)
+        message = str(exc.value)
+        assert "dacl10k" in message
+        # The hint has to name the pre-flight check, because the whole reason
+        # this corpus is in use is that the specified one downloaded broken.
+        assert "check_dataset_archive" in message
+
+    def test_an_unknown_corpus_names_the_ones_that_exist(self, tmp_path):
+        with pytest.raises(DataUnavailable) as exc:
+            B.run(root=tmp_path, corpus="not_a_corpus", log=lambda *a: None)
+        assert "dacl10k" in str(exc.value) and "codebrim" in str(exc.value)
 
     def test_report_states_that_the_baseline_is_not_a_trained_model(self):
         report = B.BenchmarkReport(detector="baseline@1", iou_threshold=0.5)
         assert "not a trained model" in B.render(report)
+
+class TestLabelmeAnnotationParsing:
+    """dacl10k publishes labelme-style JSON polygons, not Pascal-VOC boxes.
+
+    This project scores localisation by IoU over boxes, so each polygon is
+    reduced to its bounding box. That is the standard way to use a segmentation
+    set for detection, and it is recorded as a deviation in ASSUMPTIONS.md H6b.
+    """
+
+    def _write(self, path, shapes):
+        path.write_text(json.dumps({
+            "imageName": path.stem + ".jpg",
+            "imageWidth": 500, "imageHeight": 400,
+            "split": "train", "dacl10k_version": "v2",
+            "shapes": shapes,
+        }), encoding="utf-8")
+        return path
+
+    def test_a_polygon_becomes_its_bounding_box(self, tmp_path):
+        path = self._write(tmp_path / "a.json", [{
+            "label": "Crack", "shape_type": "polygon",
+            "points": [[10, 20], [100, 25], [60, 90], [12, 70]],
+        }])
+        boxes = B.parse_annotation_file(path)
+        assert len(boxes) == 1
+        box = boxes[0]
+        assert (box.x, box.y) == (10, 20)
+        assert (box.w, box.h) == (90, 70)      # 100-10, 90-20
+        assert box.defect_class == "crack"
+        assert box.confidence == 1.0
+
+    def test_dacl10k_class_names_fold_onto_the_shared_vocabulary(self, tmp_path):
+        """A run over either corpus must report the same class names."""
+        path = self._write(tmp_path / "b.json", [
+            {"label": lbl, "shape_type": "polygon",
+             "points": [[0, 0], [50, 0], [50, 50], [0, 50]]}
+            for lbl in ("Spalling", "Rust", "ExposedRebars", "Efflorescence")
+        ])
+        assert {b.defect_class for b in B.parse_annotation_file(path)} == {
+            "spallation", "corrosion_stain", "exposed_bars", "efflorescence"}
+
+    def test_a_dacl10k_only_class_keeps_its_own_name(self, tmp_path):
+        # It has no CODEBRIM counterpart, so it must not be folded onto one.
+        path = self._write(tmp_path / "c.json", [{
+            "label": "Wetspot", "shape_type": "polygon",
+            "points": [[0, 0], [30, 0], [30, 30], [0, 30]]}])
+        assert B.parse_annotation_file(path)[0].defect_class == "wetspot"
+
+    def test_component_classes_are_not_scored_as_damage(self, tmp_path):
+        """A bearing is what the bridge is made of, not what is wrong with it.
+
+        Counting one as a defect the detector missed would put non-defects into
+        the false-negative column — the reasoning behind ASSUMPTIONS.md E3.
+        """
+        square = [[0, 0], [40, 0], [40, 40], [0, 40]]
+        path = self._write(tmp_path / "d.json", [
+            {"label": "Bearing", "shape_type": "polygon", "points": square},
+            {"label": "Drainage", "shape_type": "polygon", "points": square},
+            {"label": "JTape", "shape_type": "polygon", "points": square},
+            {"label": "PEquipment", "shape_type": "polygon", "points": square},
+            {"label": "EJoint", "shape_type": "polygon", "points": square},
+            {"label": "Crack", "shape_type": "polygon", "points": square},
+        ])
+        boxes = B.parse_annotation_file(path)
+        assert [b.defect_class for b in boxes] == ["crack"]
+
+    @pytest.mark.parametrize("label", ["Bearing", "EJoint", "Drainage",
+                                       "PEquipment", "JTape", "WConccor"])
+    def test_every_component_class_is_recognised_as_such(self, label):
+        assert B.is_non_damage(label)
+
+    @pytest.mark.parametrize("label", ["Crack", "Spalling", "Rust", "Cavity",
+                                       "ExposedRebars", "Weathering"])
+    def test_damage_classes_are_not_treated_as_components(self, label):
+        assert not B.is_non_damage(label)
+
+    def test_a_degenerate_polygon_is_dropped_not_scored_as_a_zero_box(self, tmp_path):
+        path = self._write(tmp_path / "e.json", [
+            {"label": "Crack", "shape_type": "point", "points": [[5, 5]]},
+            {"label": "Crack", "shape_type": "polygon", "points": [[7, 7], [7, 7]]},
+            {"label": "Crack", "shape_type": "polygon",
+             "points": [[0, 0], [20, 0], [20, 20], [0, 20]]},
+        ])
+        assert len(B.parse_annotation_file(path)) == 1
+
+    def test_an_annotation_of_components_only_is_reported_not_scored_as_clean(self, tmp_path):
+        """Otherwise an image full of bearings scores as "no defects present"."""
+        path = self._write(tmp_path / "f.json", [{
+            "label": "Bearing", "shape_type": "polygon",
+            "points": [[0, 0], [40, 0], [40, 40], [0, 40]]}])
+        with pytest.raises(DataUnavailable) as exc:
+            B.parse_annotation_file(path)
+        assert "parse_labelme_json" in str(exc.value)
+
+    def test_malformed_json_points_at_the_one_change_point(self, tmp_path):
+        path = tmp_path / "g.json"
+        path.write_text("{not json", encoding="utf-8")
+        with pytest.raises(DataUnavailable):
+            B.parse_annotation_file(path)
+
+
+class TestAnnotationIndex:
+    """Annotations are found through one walk, not one walk per image.
+
+    dacl10k keeps annotations in a parallel annotations/{split}/ tree rather than
+    beside the images, so the sibling lookup misses and the fallback ran an
+    rglob per image -- O(images x files). On 7,910 images over ~17,000 files that
+    is the difference between a benchmark that finishes and one that hangs.
+    """
+
+    def test_a_parallel_annotation_tree_is_found(self, tmp_path):
+        (tmp_path / "images" / "train").mkdir(parents=True)
+        (tmp_path / "annotations" / "train").mkdir(parents=True)
+        image = tmp_path / "images" / "train" / "img_0001.jpg"
+        image.write_bytes(b"")
+        annotation = tmp_path / "annotations" / "train" / "img_0001.json"
+        annotation.write_text("{}", encoding="utf-8")
+
+        index = B.build_annotation_index(tmp_path)
+        assert index == {"img_0001": annotation}
+        assert B.find_annotation(image, tmp_path, index) == annotation
+
+    def test_a_sibling_annotation_still_wins(self, tmp_path):
+        image = tmp_path / "shot.png"
+        image.write_bytes(b"")
+        sibling = tmp_path / "shot.xml"
+        sibling.write_text("<annotation/>", encoding="utf-8")
+        assert B.find_annotation(image, tmp_path, {}) == sibling
+
+    def test_an_unannotated_image_resolves_to_none(self, tmp_path):
+        image = tmp_path / "lonely.jpg"
+        image.write_bytes(b"")
+        assert B.find_annotation(image, tmp_path, {}) is None
+
+    def test_the_index_is_built_once_and_is_deterministic(self, tmp_path):
+        (tmp_path / "annotations").mkdir()
+        for name in ("b", "a", "c"):
+            (tmp_path / "annotations" / f"{name}.json").write_text("{}", encoding="utf-8")
+        assert B.build_annotation_index(tmp_path) == B.build_annotation_index(tmp_path)
+
+    def test_xml_is_preferred_over_json_for_the_same_stem(self, tmp_path):
+        """Deterministic when a corpus carries both, rather than walk-order."""
+        (tmp_path / "x.json").write_text("{}", encoding="utf-8")
+        (tmp_path / "x.xml").write_text("<annotation/>", encoding="utf-8")
+        assert B.build_annotation_index(tmp_path)["x"].suffix == ".xml"
+
+
+class TestDacl10kDiscovery:
+    def test_the_archive_wrapper_directory_is_tolerated(self, tmp_path):
+        from src.ingest import dacl10k
+
+        base = tmp_path / "dacl10k" / "dacl10k_v2_devphase"
+        for split in ("train", "validation"):
+            (base / "images" / split).mkdir(parents=True)
+            (base / "annotations" / split).mkdir(parents=True)
+            make_image(base / "images" / split / f"{split}_0001.jpg")
+
+        found_base, images = dacl10k.find_images(root=tmp_path)
+        assert found_base == base
+        assert len(images) == 2
+
+    def test_it_also_works_unpacked_without_the_wrapper(self, tmp_path):
+        from src.ingest import dacl10k
+
+        base = tmp_path / "dacl10k"
+        for split in ("train", "validation"):
+            (base / "images" / split).mkdir(parents=True)
+            (base / "annotations" / split).mkdir(parents=True)
+            make_image(base / "images" / split / f"{split}_0001.jpg")
+
+        found_base, images = dacl10k.find_images(root=tmp_path)
+        assert found_base == base
+        assert len(images) == 2
+
+    def test_the_unannotated_challenge_splits_are_not_registered(self, tmp_path):
+        """testdev and testchallenge have no public annotations.
+
+        Registering them would add images the benchmark could only skip, and a
+        skipped image is indistinguishable in a report from one the detector
+        failed on.
+        """
+        from src.ingest import dacl10k
+
+        base = tmp_path / "dacl10k"
+        for split in ("train", "validation", "testdev", "testchallenge"):
+            (base / "images" / split).mkdir(parents=True)
+            make_image(base / "images" / split / f"{split}_0001.jpg")
+        (base / "annotations" / "train").mkdir(parents=True)
+        (base / "annotations" / "validation").mkdir(parents=True)
+
+        _, images = dacl10k.find_images(root=tmp_path)
+        names = {p.parent.name for p in images}
+        assert names == {"train", "validation"}
+
+    def test_a_layout_without_annotations_is_refused_with_the_expected_shape(self, tmp_path):
+        from src.ingest import dacl10k
+
+        (tmp_path / "dacl10k" / "images" / "train").mkdir(parents=True)
+        with pytest.raises(DataUnavailable) as exc:
+            dacl10k.find_images(root=tmp_path)
+        assert "annotations" in str(exc.value)
+
+    def test_corpus_imagery_is_still_structurally_unattachable(self, tmp_path):
+        """Invariant 6 must hold for a substituted corpus exactly as before."""
+        from src.db import connect
+        from src.ingest import dacl10k
+
+        base = tmp_path / "dacl10k"
+        for split in ("train", "validation"):
+            (base / "images" / split).mkdir(parents=True)
+            (base / "annotations" / split).mkdir(parents=True)
+            make_image(base / "images" / split / f"{split}_0001.jpg")
+
+        conn = connect(":memory:")
+        result = dacl10k.ingest(conn, root=tmp_path, log=lambda *a: None)
+        assert result["images"] == 2
+        rows = conn.execute(
+            "SELECT provenance, struct_norm, corpus FROM images").fetchall()
+        assert rows
+        for row in rows:
+            assert row["provenance"] == "reference_corpus"
+            assert row["struct_norm"] is None
+            assert row["corpus"] == "dacl10k"
+
+    def test_item_ids_are_stable_and_derived_from_the_path(self, tmp_path):
+        from src.db import connect
+        from src.ingest import dacl10k
+
+        base = tmp_path / "dacl10k" / "dacl10k_v2_devphase"
+        for split in ("train", "validation"):
+            (base / "images" / split).mkdir(parents=True)
+            (base / "annotations" / split).mkdir(parents=True)
+        make_image(base / "images" / "train" / "dacl10k_v2_train_0042.jpg")
+
+        conn = connect(":memory:")
+        dacl10k.ingest(conn, root=tmp_path, log=lambda *a: None)
+        first = [r[0] for r in conn.execute("SELECT artifact_id FROM images ORDER BY 1")]
+        dacl10k.ingest(conn, root=tmp_path, log=lambda *a: None)
+        second = [r[0] for r in conn.execute("SELECT artifact_id FROM images ORDER BY 1")]
+        assert first == second
+        # Relative to the base, so the wrapper directory does not leak into the ID.
+        assert first == ["REF-dacl10k-images_train_dacl10k_v2_train_0042"]

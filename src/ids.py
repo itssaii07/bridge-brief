@@ -41,7 +41,10 @@ from dataclasses import dataclass
 COMPONENTS: tuple[str, ...] = ("deck", "superstructure", "substructure", "culvert")
 
 #: Reference corpora. Reference imagery is never evidence about a named bridge.
-CORPORA: tuple[str, ...] = ("codebrim",)
+#: ``dacl10k`` is in use because the published CODEBRIM archive is malformed
+#: (ASSUMPTIONS.md H6/H6b). Both are listed: CODEBRIM IDs minted before the
+#: substitution must keep resolving.
+CORPORA: tuple[str, ...] = ("codebrim", "dacl10k")
 
 #: Non-destructive evaluation methods. Reserved — no NDE data is ingested yet.
 #: Present so the evidence model demonstrably extends to sensor streams.
