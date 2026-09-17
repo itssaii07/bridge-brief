@@ -21,7 +21,8 @@ from pathlib import Path
 from ..db import DataUnavailable, connect
 from .metrics import (
     Metric, contradiction_precision, corpus_metrics, correction_effort_metric,
-    defect_detection, missing_evidence_recall, predictive_alignment,
+    defect_detection, human_sentence_metrics, missing_evidence_recall,
+    predictive_alignment,
     predictive_lift_by_direction,
     source_link_accuracy, unsupported_content_rate,
 )
@@ -29,7 +30,8 @@ from .metrics import (
 
 def collect(conn, *, base_year: int = 2023, check_year: int = 2025,
             review_path: Path | None = None,
-            benchmark_path: Path | None = None) -> list[Metric]:
+            benchmark_path: Path | None = None,
+            sentence_review_path: Path | None = None) -> list[Metric]:
     """Compute every metric in the table, in reporting order."""
     benchmark = None
     if benchmark_path and Path(benchmark_path).exists():
@@ -42,6 +44,7 @@ def collect(conn, *, base_year: int = 2023, check_year: int = 2025,
     metrics += predictive_lift_by_direction(conn, base_year, check_year)
     metrics += defect_detection(conn, benchmark)
     metrics.append(source_link_accuracy(conn))
+    metrics += human_sentence_metrics(conn, sentence_review_path)
     metrics.append(missing_evidence_recall(conn, base_year))
     metrics.append(unsupported_content_rate(conn))
     metrics.append(correction_effort_metric(conn))
@@ -99,6 +102,9 @@ def main(argv: list[str] | None = None) -> int:
                         help="labelled contradiction review CSV, for precision")
     parser.add_argument("--benchmark", default=None,
                         help="JSON written by src.eval.codebrim_benchmark --json")
+    parser.add_argument("--sentence-review", default=None,
+                        help="labelled sentence CSV from src.eval.sentence_review, "
+                             "for factual fidelity and semantic source-link accuracy")
     parser.add_argument("--json", default=None, help="also write the table as JSON")
     args = parser.parse_args(argv)
 
@@ -112,6 +118,8 @@ def main(argv: list[str] | None = None) -> int:
             conn, base_year=args.base_year, check_year=args.check_year,
             review_path=Path(args.review) if args.review else None,
             benchmark_path=Path(args.benchmark) if args.benchmark else None,
+            sentence_review_path=(Path(args.sentence_review)
+                                  if args.sentence_review else None),
         )
         print(render(metrics, base_year=args.base_year, check_year=args.check_year))
         if args.json:

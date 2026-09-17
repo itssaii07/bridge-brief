@@ -15,6 +15,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from ..analysis.validate import read_review_labels, validate
+from .sentence_review import read_labels as read_sentence_labels
 from ..db import DataUnavailable
 from ..ui.review import correction_effort
 
@@ -155,12 +156,55 @@ def defect_detection(conn, benchmark: dict | None) -> list[Metric]:
     agnostic = benchmark.get("class_agnostic", {})
     note = (f"class-agnostic (localisation only) over {corpus}; the shipped baseline "
             "is not a trained model and its class-aware score is zero by construction")
+    recall = agnostic.get("recall")
+    # The specification asks for the missed-defect rate by name. It is the
+    # complement of recall, and reporting only recall leaves the reader to do
+    # that subtraction on the least flattering number in the table.
+    missed = None if recall is None else round(1.0 - recall, 4)
     return [
         Metric("defect_detection_precision", agnostic.get("precision"), truth,
                status=note, detail=benchmark.get("class_aware", {})),
-        Metric("defect_detection_recall", agnostic.get("recall"), truth, status=note),
+        Metric("defect_detection_recall", recall, truth, status=note),
         Metric("defect_detection_f1", agnostic.get("f1"), truth, status=note),
+        Metric("missed_defect_rate", missed, truth,
+               status=("1 - recall: the share of annotated defects the detector did "
+                       "not localise. " + note),
+               detail={"annotations": benchmark.get("annotations"),
+                       "images_scored": benchmark.get("images_scored"),
+                       "images_without_damage": benchmark.get("images_without_damage")}),
     ]
+
+
+def human_sentence_metrics(conn, review_path: Path | None) -> list[Metric]:
+    """Factual fidelity and the semantic half of source-link accuracy.
+
+    Both require a human. ``source_link_resolution`` covers the mechanical half —
+    every citation parses and resolves — which is necessary and not sufficient: a
+    sentence can cite a real artifact and still misdescribe it. Only a person can
+    say whether the cited record actually supports the claim, so the harness
+    exports a sample and reads labels back rather than scoring itself.
+    """
+    truth = "manual verification of sampled brief sentences"
+    names = ("source_link_accuracy_semantic", "factual_fidelity")
+    if review_path is None or not Path(review_path).exists():
+        status = ("no labelled sample; export one with `python -m "
+                  "src.eval.sentence_review --export reviews/sentences.csv`, fill in "
+                  "the supported/factual columns, then pass --sentence-review here")
+        return [Metric(name, None, truth, status=status) for name in names]
+
+    stats = read_sentence_labels(Path(review_path))
+    out: list[Metric] = []
+    for name, judged_key in zip(names, ("source_link_judged", "factual_judged")):
+        judged = stats.get(judged_key) or 0
+        if not judged:
+            out.append(Metric(name, None, truth, detail=stats, status=(
+                f"sample exists but nothing is labelled for {name}; "
+                f"{stats['unlabelled']} of {stats['rows']} row(s) are blank. An "
+                "unreviewed sentence is not a passing sentence")))
+            continue
+        out.append(Metric(name, stats[name], truth, detail=stats,
+                          status=f"{judged} sentence(s) judged by a human"))
+    return out
 
 
 def source_link_accuracy(conn) -> Metric:

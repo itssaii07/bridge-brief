@@ -675,3 +675,129 @@ class TestDacl10kDiscovery:
         assert first == second
         # Relative to the base, so the wrapper directory does not leak into the ID.
         assert first == ["REF-dacl10k-images_train_dacl10k_v2_train_0042"]
+
+
+class TestRegionsReachABrief:
+    """The full imagery chain: upload -> detect -> region -> brief -> gate -> UI.
+
+    "image regions" is a named deliverable of the problem statement. Each link
+    was unit-tested in isolation but the chain was never exercised, so nothing
+    proved a detected region could actually become a cited sentence in a brief.
+    It cannot be demonstrated on real data here — that needs inspection
+    photographs of a named bridge, and corpus imagery is structurally barred
+    from standing in (invariant 6) — so it is proved with fixtures instead.
+    """
+
+    def _structure_with_findings(self, conn, struct="AL013450"):
+        from src import ids
+        from src.analysis import contradictions as C
+        from src.store import upsert_element_state, upsert_rating, upsert_structure
+
+        upsert_structure(conn, struct, struct_raw=struct, state_abbr="AL", year=2023)
+        upsert_rating(conn, struct_norm=struct, year=2023, component="deck", rating=7,
+                      rating_raw="7", artifact_id=ids.nbi_id(struct, 2023, "deck"),
+                      source_path="t", source_line=1)
+        for cs, qty in ((1, 7660.0), (3, 340.0)):
+            upsert_element_state(conn, struct_norm=struct, year=2023, elem_num=12,
+                                 cs=cs, cs_qty=qty, total_qty=8000.0, units="SQFT",
+                                 elem_name="RC Deck", elem_class="deck",
+                                 state_abbr="AL",
+                                 artifact_id=ids.nbe_id(struct, 2023, 12, cs),
+                                 source_path="t")
+        C.run(conn, 2023, log=lambda *a: None)
+        return struct
+
+    def test_a_detected_region_becomes_a_cited_sentence_in_the_brief(self, tmp_path):
+        from src.generate.brief import generate
+        from src.ids import parse
+
+        conn = connect(tmp_path / "assets.sqlite")
+        struct = self._structure_with_findings(conn)
+
+        photos = tmp_path / "photos"
+        photos.mkdir()
+        make_textured_image(photos / "deck_soffit_01.png")
+        uploads.ingest_directory(conn, struct, photos, upload_root=tmp_path / "uploads")
+        summary = uploads.detect_for_structure(conn, struct, log=lambda *a: None)
+        assert summary["regions"] > 0, "fixture image must yield at least one region"
+
+        brief = generate(conn, struct, 2023, log=lambda *a: None)
+        sentences = [dict(r) for r in conn.execute(
+            "SELECT sentence_id, text FROM brief_sentences WHERE brief_id = ?",
+            (brief["brief_id"],))]
+        region_sentences = [s for s in sentences if "region" in s["text"].lower()]
+        assert region_sentences, "a detected region must produce a brief sentence"
+
+        # It survived the grounding gate, so it cites resolvable artifacts...
+        cited = [r[0] for r in conn.execute(
+            "SELECT artifact_id FROM sentence_citations WHERE sentence_id = ?",
+            (region_sentences[0]["sentence_id"],))]
+        assert cited
+        # ...and at least one of them is the region itself.
+        assert any(parse(c).region is not None for c in cited), cited
+
+    def test_a_region_sentence_names_it_as_an_automated_proposal(self, tmp_path):
+        """A detector guess must never read like a confirmed defect."""
+        from src.generate.brief import generate
+
+        conn = connect(tmp_path / "assets.sqlite")
+        struct = self._structure_with_findings(conn)
+        photos = tmp_path / "photos"
+        photos.mkdir()
+        make_textured_image(photos / "p01.png")
+        uploads.ingest_directory(conn, struct, photos, upload_root=tmp_path / "uploads")
+        uploads.detect_for_structure(conn, struct, log=lambda *a: None)
+
+        brief = generate(conn, struct, 2023, log=lambda *a: None)
+        texts = [r[0] for r in conn.execute(
+            "SELECT text FROM brief_sentences WHERE brief_id = ?", (brief["brief_id"],))]
+        region_text = next(t for t in texts if "region" in t.lower())
+        assert "automated proposal" in region_text.lower()
+        # And it is single-source: one detector on one photo is not corroboration.
+        tier = conn.execute(
+            "SELECT evidence_tier FROM brief_sentences WHERE brief_id = ? "
+            "AND text = ?", (brief["brief_id"], region_text)).fetchone()[0]
+        assert tier == "single_source"
+
+    def test_the_regions_artifacts_resolve_back_to_the_stored_photo(self, tmp_path):
+        from src.store import resolve_artifact
+
+        conn = connect(tmp_path / "assets.sqlite")
+        struct = self._structure_with_findings(conn)
+        photos = tmp_path / "photos"
+        photos.mkdir()
+        make_textured_image(photos / "p01.png")
+        uploads.ingest_directory(conn, struct, photos, upload_root=tmp_path / "uploads")
+        uploads.detect_for_structure(conn, struct, log=lambda *a: None)
+
+        region_ids = [r[0] for r in conn.execute(
+            "SELECT artifact_id FROM image_regions ORDER BY 1")]
+        assert region_ids
+        for artifact_id in region_ids:
+            row = resolve_artifact(conn, artifact_id)
+            assert row is not None, artifact_id
+            assert row["source_path"], artifact_id
+
+    def test_the_brief_page_labels_the_photo_as_an_inspection_upload(self, tmp_path):
+        """Invariant 6 on the page a human actually reads."""
+        from src.generate.brief import generate
+        from src.ui import views
+        from src.ui.server import brief_payload
+
+        conn = connect(tmp_path / "assets.sqlite")
+        struct = self._structure_with_findings(conn)
+        photos = tmp_path / "photos"
+        photos.mkdir()
+        make_textured_image(photos / "p01.png")
+        uploads.ingest_directory(conn, struct, photos, upload_root=tmp_path / "uploads")
+        uploads.detect_for_structure(conn, struct, log=lambda *a: None)
+        brief = generate(conn, struct, 2023, log=lambda *a: None)
+
+        payload = brief_payload(conn, brief["brief_id"])
+        html = views.brief_view(payload["brief"], payload["sentences"],
+                                payload["artifacts"], payload["blocked"],
+                                payload["states"], payload["trail"], payload["images"])
+        assert 'class="tag inspection_upload"' in html
+        # The corpus tag is defined in the stylesheet but must never be applied:
+        # a brief shows only this structure's own imagery.
+        assert 'class="tag reference_corpus"' not in html

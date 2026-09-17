@@ -180,3 +180,84 @@ def require_brief(conn: sqlite3.Connection, brief_id: str) -> sqlite3.Row:
     if row is None:
         raise DataUnavailable(f"no brief with id {brief_id}")
     return row
+
+
+#: Brief statuses that still need a human, in the order a reviewer should work.
+PENDING_STATUSES = ("in_review", "draft")
+#: Brief statuses a human has already decided.
+DECIDED_STATUSES = ("signed_off", "rejected")
+
+
+def signoff_queue(conn: sqlite3.Connection, *, include_decided: bool = False,
+                  limit: int = 200) -> list[dict]:
+    """The human sign-off queue: briefs awaiting review, most urgent first.
+
+    Required by the problem statement as a named deliverable. Per-brief sign-off
+    existed before this; what was missing was the queue itself — a reviewer had
+    no way to see what was waiting without already knowing the structure.
+
+    Ordering is by review urgency, not by recency, and the reason matters: a
+    reviewer working newest-first would reach the most severe unreviewed finding
+    last. So:
+
+    1. ``in_review`` before ``draft`` — finish what is started before starting more.
+    2. Then by the highest finding severity in the brief, descending.
+    3. Then by ``blocked_unsupported`` descending — a brief where the gate dropped
+       sentences is one where the drafter tried to say something it could not
+       support, which is worth a human's attention.
+    4. Then by brief id, so the order is deterministic and a reviewer's place in
+       the queue does not move under them between page loads.
+
+    Counts of reviewed findings come from ``review_actions``, which is
+    append-only, so "reviewed" means "has at least one recorded action".
+    """
+    statuses = (PENDING_STATUSES + DECIDED_STATUSES) if include_decided else PENDING_STATUSES
+    placeholders = ", ".join("?" for _ in statuses)
+    rows = conn.execute(
+        f"""
+        SELECT b.brief_id, b.struct_norm, b.year, b.version, b.status,
+               b.generated_at, b.total_sentences, b.blocked_unsupported,
+               s.state_abbr,
+               (SELECT COUNT(*) FROM brief_sentences bs
+                 WHERE bs.brief_id = b.brief_id) AS sentences,
+               (SELECT COUNT(DISTINCT ra.finding_id) FROM review_actions ra
+                 WHERE ra.brief_id = b.brief_id AND ra.finding_id IS NOT NULL)
+                 AS findings_reviewed,
+               (SELECT COUNT(DISTINCT f.finding_id) FROM findings f
+                 WHERE f.struct_norm = b.struct_norm AND f.year = b.year)
+                 AS findings_total,
+               (SELECT MAX(f.severity) FROM findings f
+                 WHERE f.struct_norm = b.struct_norm AND f.year = b.year)
+                 AS max_severity,
+               (SELECT COUNT(*) FROM findings f
+                 WHERE f.struct_norm = b.struct_norm AND f.year = b.year
+                   AND f.evidence_tier = 'conflicting') AS conflicting,
+               (SELECT ra.reviewer FROM review_actions ra
+                 WHERE ra.brief_id = b.brief_id
+                 ORDER BY ra.id DESC LIMIT 1) AS last_reviewer
+          FROM briefs b
+          LEFT JOIN structures s ON s.struct_norm = b.struct_norm
+         WHERE b.status IN ({placeholders})
+         ORDER BY CASE b.status WHEN 'in_review' THEN 0 WHEN 'draft' THEN 1 ELSE 2 END,
+                  COALESCE(max_severity, 0) DESC,
+                  b.blocked_unsupported DESC,
+                  b.brief_id
+         LIMIT ?
+        """,
+        (*statuses, limit),
+    ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def queue_totals(conn: sqlite3.Connection) -> dict:
+    """Headline counts for the queue, by status. Every brief is in exactly one."""
+    counts = dict(conn.execute(
+        "SELECT status, COUNT(*) FROM briefs GROUP BY status").fetchall())
+    pending = sum(counts.get(status, 0) for status in PENDING_STATUSES)
+    return {
+        "awaiting review": pending,
+        "in review": counts.get("in_review", 0),
+        "draft": counts.get("draft", 0),
+        "signed off": counts.get("signed_off", 0),
+        "rejected": counts.get("rejected", 0),
+    }

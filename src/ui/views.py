@@ -126,6 +126,7 @@ def page(title: str, body: str, *, subtitle: str = "") -> str:
 <body>
 <header>
   <h1><a href="/">Inspection Brief Review</a></h1>
+  <span class="sub"><a href="/">structures</a> &middot; <a href="/queue">sign-off queue</a></span>
   <span class="sub">{E(subtitle)}</span>
   <span class="sub" style="margin-left:auto">Drafts only &mdash; no automated safety
   clearance or maintenance authorisation</span>
@@ -141,7 +142,7 @@ def empty_state(message: str, commands: list[str]) -> str:
             f'<div class="empty">{E(message)}<br><br>{steps}</div></div>')
 
 
-def structure_list(rows: list[dict], totals: dict) -> str:
+def structure_list(rows: list[dict], totals: dict, *, pending: int = 0) -> str:
     if not rows:
         return page("Inspection Brief Review", empty_state(
             "No structures have been ingested. The database is empty, which is the "
@@ -157,7 +158,13 @@ def structure_list(rows: list[dict], totals: dict) -> str:
         f'<div class="n">{value:,}</div><div class="k">{E(key.replace("_", " "))}</div></div>'
         for key, value in totals.items()
     )
-    body = [f'<div class="counters">{counters}</div>',
+    # The queue is a named deliverable, so it gets a counter here rather than
+    # only a nav link: a reviewer should see work waiting without looking for it.
+    queue_note = (
+        f'<div class="notice"><b>{pending:,}</b> brief(s) awaiting human sign-off '
+        '&mdash; <a href="/queue">open the sign-off queue</a>. No brief can be '
+        'exported before a named human signs it off.</div>' if pending else "")
+    body = [f'<div class="counters">{counters}</div>', queue_note,
             '<div class="panel" style="margin-top:18px"><h2>Structures</h2><table>',
             "<tr><th>structure</th><th>state</th><th>contradictions</th>"
             "<th>single source</th><th>photos</th><th>briefs</th></tr>"]
@@ -377,3 +384,67 @@ def _trail_panel(rows: list[dict]) -> str:
         out.append("</ul>")
     out.append("</div>")
     return "".join(out)
+
+
+def signoff_queue_view(rows: list[dict], totals: dict, *, include_decided: bool) -> str:
+    """The human sign-off queue — the problem statement's named deliverable.
+
+    Ordered by review urgency rather than recency, so the most severe unreviewed
+    brief is first rather than last. The ordering rule is stated on the page,
+    because a queue whose order a reviewer cannot predict is one they will not
+    trust.
+    """
+    if not rows:
+        message = ("No briefs are awaiting sign-off."
+                   if not include_decided else "No briefs exist yet.")
+        return page("Sign-off queue", empty_state(
+            message,
+            ["python -m src.analysis.contradictions --year 2023",
+             "python -m src.generate.brief --structure <flagged structure> --year 2023"],
+        ), subtitle="sign-off queue")
+
+    counters = "".join(
+        f'<div class="counter{" blocked" if key == "awaiting review" else ""}">'
+        f'<div class="n">{value:,}</div><div class="k">{E(key)}</div></div>'
+        for key, value in totals.items())
+
+    toggle = ("/queue" if include_decided else "/queue?all=1")
+    toggle_label = ("hide decided briefs" if include_decided
+                    else "show briefs already decided")
+
+    body = [f'<div class="counters">{counters}</div>',
+            '<div class="notice">A brief carries no authority until a named human '
+            'signs it off. Nothing here is a safety clearance or a maintenance '
+            'order, and no brief can be exported before sign-off.</div>',
+            '<div class="panel"><h2>Awaiting human sign-off</h2>',
+            '<div class="empty" style="padding:0 0 12px">Ordered by urgency: briefs '
+            'already in review first, then by highest finding severity, then by how '
+            'many sentences the grounding gate had to drop. The order is '
+            'deterministic — your place in the queue will not move between page '
+            f'loads. <a href="{toggle}">{E(toggle_label)}</a></div>',
+            "<table>",
+            "<tr><th>brief</th><th>structure</th><th>status</th>"
+            "<th>severity</th><th>conflicting</th><th>sentences</th>"
+            "<th>blocked</th><th>findings reviewed</th><th>last reviewer</th></tr>"]
+    for row in rows:
+        severity = row.get("max_severity")
+        reviewed = f'{row["findings_reviewed"]:,}/{row["findings_total"]:,}'
+        blocked = row["blocked_unsupported"]
+        # Built outside the f-string: 3.10 f-strings cannot contain a backslash.
+        blocked_style = ' style="color:var(--warn)"' if blocked else ""
+        severity_text = "-" if severity is None else f"{severity:.2f}"
+        body.append(
+            f'<tr><td><a href="/brief/{E(row["brief_id"])}">{E(row["brief_id"])}</a></td>'
+            f'<td><a href="/structure/{E(row["struct_norm"])}">{E(row["struct_norm"])}</a>'
+            f' <span class="tag">{E(row.get("state_abbr") or "-")}</span></td>'
+            f'<td><span class="tag {E(row["status"])}">{E(row["status"].replace("_", " "))}'
+            '</span></td>'
+            f'<td>{severity_text}</td>'
+            f'<td>{row["conflicting"]:,}</td>'
+            f'<td>{row["sentences"]:,}</td>'
+            f'<td{blocked_style}>{blocked:,}</td>'
+            f'<td>{reviewed}</td>'
+            f'<td>{E(row.get("last_reviewer") or "-")}</td></tr>')
+    body.append("</table></div>")
+    return page("Sign-off queue", "".join(body),
+                subtitle=f"{len(rows):,} brief(s) listed")

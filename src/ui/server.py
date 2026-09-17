@@ -23,8 +23,10 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, unquote, urlparse
 
 from ..db import DataUnavailable, connect
-from . import views
-from .review import ReviewError, finding_states, record_action, require_brief, sign_off, trail
+from . import review, views
+from .review import (
+    ReviewError, finding_states, record_action, require_brief, sign_off, trail,
+)
 
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8765
@@ -204,7 +206,15 @@ class Handler(BaseHTTPRequestHandler):
         try:
             if path == "/":
                 rows, totals = list_structures(conn)
-                self._send(views.structure_list(rows, totals))
+                self._send(views.structure_list(
+                    rows, totals, pending=review.queue_totals(conn)["awaiting review"]))
+            elif path == "/queue":
+                # The human sign-off queue, required by the problem statement.
+                include_decided = parse_qs(urlparse(self.path).query).get("all", ["0"])[0] == "1"
+                self._send(views.signoff_queue_view(
+                    review.signoff_queue(conn, include_decided=include_decided),
+                    review.queue_totals(conn),
+                    include_decided=include_decided))
             elif path.startswith("/structure/"):
                 struct = unquote(path.split("/", 2)[2]).strip("/")
                 payload = structure_payload(conn, struct)
