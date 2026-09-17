@@ -400,25 +400,63 @@ release uses for its bounding-box annotations. Parsing is isolated in
 `src/eval/codebrim_benchmark.py :: parse_annotation_file`. If the real layout differs,
 that one function is the change point.
 
-**H6. CODEBRIM is unavailable: the archive is encrypted.**
-`CODEBRIM_original_images.zip` was downloaded and its MD5 verified against the Zenodo
-record (`27baf3a036d0b7d757ff4df47c08c449`), so the file is byte-perfect. Extraction
-fails with `BadZipFile: Bad magic number for file header`, which means the archive is
-encrypted; Python's `zipfile` cannot decrypt AES ZIPs at all. The password is not in
-`license.md` and not in the authors' GitHub README. It was not re-downloaded — the file
-is confirmed good — and nothing was substituted for it.
+**H6. CORRECTED DIAGNOSIS — CODEBRIM is damaged as published, not encrypted.**
+The handoff recorded this as an encrypted archive needing a password from the authors.
+That is wrong, and acting on it would waste the effort: measured on the file itself,
 
-Consequence: milestone 6 is not run. `defect_detection_precision`, `_recall` and `_f1`
-report `n/a` **with the reason and the command that would fill them**, which is the
-behaviour the harness was built for. `CLAUDE.md` names milestones 5–6 as the first thing
-to cut if the schedule slips, and H4's annotation-format assumption is therefore still
-unverified.
+| check | result |
+|---|---|
+| MD5 vs the Zenodo record | `27baf3a036d0b7d757ff4df47c08c449` — **matches** |
+| size on disk | 8,310,630,622 bytes |
+| members with the ZIP encryption bit set | **0 of 2,766** |
+| largest local-header offset in the central directory | 8,588,194,190 — **277 MB past EOF** |
+| annotations readable | **1,057 of 1,057 (100%)** |
+| images readable | **839 of 1,700 (49.4%)** |
 
-If the password turns up, extract with `pyzipper` or 7-Zip. A viable substitute is
-**dacl1k** (1,474 images, 2,367 bounding boxes, near-identical classes); adopting it
-would be a deviation from the specified dataset and belongs here as one, not as a silent
-swap. Either way the dataset may not be redistributed, so nothing from it is ever
-committed. Any writeup must cite the CVPR19 paper.
+Nothing is encrypted. The central directory parses, the compression is ordinary deflate,
+and the MD5 matches, so **re-downloading would produce the same bytes** — that part of the
+handoff was right. What is wrong is the archive's own offset table: every image sits above
+the 4 GB mark, the first at 2³²+63, and readable and unreadable entries are interleaved
+within the same gigabyte (roughly 220 good to 215 bad in each). That is a 32-bit
+local-header offset overflow in a ZIP64 archive, i.e. the published file is malformed, not
+the copy. `zipfile` reports it as `BadZipFile: Bad magic number for file header` because it
+seeks to an offset that is not a local header.
+
+*Change point if this is picked up:* the recovery path is a tool that scans for local
+headers instead of trusting the central directory — `7z x`, or `zip -FF <in> --out <out>`.
+Emailing the authors for a password is a dead end. The classification-balanced release is a
+separate archive and may be intact.
+
+**What this means for milestone 6.** It is not run, and the eval harness reports
+`defect_detection_precision`, `_recall` and `_f1` as `n/a` **with the reason and the
+command that would fill them** — the behaviour it was built for. `CLAUDE.md` names
+milestones 5–6 as the first thing to cut, so this was not pursued further. A partial
+benchmark over the 839 readable images is now feasible and would be a real measurement,
+but it would be over a subset selected by an archive defect, so it could not be compared
+against published CODEBRIM figures without saying so prominently.
+
+The dataset may not be redistributed: nothing from it is committed, `data/` stays
+gitignored in full, and any writeup cites the CVPR19 paper.
+
+**H7. CONFIRMED with one correction — the annotation format.** H4 assumed per-image
+Pascal-VOC XML with `<object><name>…</name><bndbox>…</bndbox></object>`. All 1,057
+annotations are readable and the geometry assumption holds exactly: `<object>` with
+`<bndbox>` and `<xmin>/<ymin>/<xmax>/<ymax>`, which `parse_annotation_file` already reads.
+
+The class does not work as assumed. `<name>` is the constant string `defect` on every box.
+The real classes live in a sibling `<Defect>` element as **multi-label flags** —
+`Background`, `Crack`, `Spallation`, `Efflorescence`, `ExposedBars`, `CorrosionStain` — and
+more than one is set at once (`Spallation=1` *and* `ExposedBars=1` on the same box, which
+is the point of the CODEBRIM benchmark).
+
+Two consequences, both recorded rather than fixed, since milestone 6 is not being run:
+
+* `parse_annotation_file` would assign every ground-truth box the single class `defect`.
+  Class-agnostic (localisation) scoring is therefore correct as written; class-aware
+  scoring would compare everything against one class and is meaningless.
+* **H5's matching rule does not model the ground truth.** It requires "the defect class
+  agrees", which presumes one class per box. A multi-label target needs a per-label
+  decision. The change point is `parse_annotation_file` plus the matcher beside it.
 
 **H5. Benchmark matching rule:** a detection matches an annotation when IoU ≥ 0.5 and the
 defect class agrees; greedy matching by descending confidence; unmatched detections are

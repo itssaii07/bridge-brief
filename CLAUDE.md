@@ -76,9 +76,11 @@ Architectural, not stylistic. Do not weaken them for convenience.
 > 66,597 / 55,905 NBE element records with 0 rejected. **10,661 structures have
 > both sources in 2023** — that is the population the contradiction engine runs on.
 >
-> **CODEBRIM is not available.** The archive is encrypted and cannot be opened, so
-> milestone 6 reports `n/a` with the reason rather than a number. See ASSUMPTIONS.md
-> H6.
+> **CODEBRIM is not usable as published.** The archive's MD5 matches Zenodo and nothing
+> in it is encrypted, but its own central directory records local-header offsets up to
+> 277 MB past the end of the file — a 32-bit offset overflow in a ZIP64 archive. All
+> 1,057 annotations and 839 of 1,700 images are readable; the rest are not. Milestone 6
+> reports `n/a` with the reason rather than a number. See ASSUMPTIONS.md H6 and H7.
 >
 > The rule that nothing is ever created under `data/` still stands, permanently: a
 > missing input is reported missing. Unit-test fixtures live in `tests/`, never under
