@@ -71,7 +71,7 @@ convention:
 
 ## Setup
 
-Python 3.11 or newer. The core runtime is **the standard library only** — no web
+Python 3.10 or newer. The core runtime is **the standard library only** — no web
 framework, no database server, no network access required.
 
 ```bash

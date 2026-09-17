@@ -31,7 +31,12 @@ produced with no API key and no network. An LLM drafter is available behind the 
 interface (`ANTHROPIC_API_KEY`, `BRIDGE_BRIEF_DRAFTER=llm`). The grounding gate is
 deterministic code in both cases and does not trust the drafter (see G1).
 
-**A4. Python 3.11+.** Uses `X | Y` type syntax and `tomllib`-era stdlib behaviour.
+**A4. Python 3.10+.** The newest language feature used is PEP 604 `X | Y` type syntax,
+which landed in 3.10. The floor was originally set at 3.11 out of caution; the full test
+suite was subsequently run under 3.10 and passes unchanged, so the floor is 3.10. Nothing
+uses a 3.11-only API (no `datetime.UTC`, no `hashlib.file_digest`, no `tomllib`, no
+`StrEnum`, no exception groups). Newer versions are still preferable — 3.12 and 3.13 are
+also tested — but 3.10 is supported.
 
 ---
 
