@@ -158,7 +158,7 @@ class TestFileLevel:
         from src.db import connect
 
         path = tmp_path / "AZ.xml"
-        path.write_text("<NBE><Structure STRUCNUM='1'><Element EN='12'/></Structure></NBE>")
+        path.write_text("<NBE><Structure STRUCNUM='1'><Element EN='12'/></Structure></NBE>", encoding="utf-8")
         conn = connect(":memory:")
         with pytest.raises(NbeFormatError) as exc:
             nbe.ingest_file(conn, path, 2023, log=lambda *a: None)
@@ -171,7 +171,7 @@ class TestFileLevel:
     def test_state_is_taken_from_the_directory_name(self, tmp_path):
         path = tmp_path / "nbe" / "2023" / "IA" / "elements.xml"
         path.parent.mkdir(parents=True)
-        path.write_text(FIELDS_ATTRS)
+        path.write_text(FIELDS_ATTRS, encoding="utf-8")
         assert nbe._state_from_path(path) == "IA"
 
     def test_missing_directory_reports_the_expected_layout(self, tmp_path):
@@ -186,7 +186,7 @@ class TestFileLevel:
 
         path = tmp_path / "nbe" / "2023" / "AL" / "elements.xml"
         path.parent.mkdir(parents=True)
-        path.write_text(FIELDS_ATTRS)
+        path.write_text(FIELDS_ATTRS, encoding="utf-8")
         conn = connect(":memory:")
 
         first = nbe.ingest_file(conn, path, 2023, log=lambda *a: None)
@@ -206,7 +206,7 @@ class TestFileLevel:
 
         path = tmp_path / "nbe" / "2023" / "AL" / "elements.xml"
         path.parent.mkdir(parents=True)
-        path.write_text(FIELDS_ATTRS)
+        path.write_text(FIELDS_ATTRS, encoding="utf-8")
         conn = connect(":memory:")
         nbe.ingest_file(conn, path, 2023, log=lambda *a: None)
         classes = dict(conn.execute("SELECT elem_num, elem_class FROM elements GROUP BY elem_num"))
@@ -218,7 +218,7 @@ class TestFileLevel:
 
         path = tmp_path / "nbe" / "2023" / "AL" / "elements.xml"
         path.parent.mkdir(parents=True)
-        path.write_text(FIELDS_ATTRS)
+        path.write_text(FIELDS_ATTRS, encoding="utf-8")
         conn = connect(":memory:")
         nbe.ingest_file(conn, path, 2023, log=lambda *a: None)
         row = resolve_artifact(conn, "NBE-013450-2023-12-cs3")

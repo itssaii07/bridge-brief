@@ -136,13 +136,13 @@ class TestContradictionPrecision:
 
     def test_it_reads_a_human_labelled_file(self, tmp_path):
         path = tmp_path / "review.csv"
-        path.write_text("finding_id,verdict (correct|incorrect)\nF-a,correct\nF-b,incorrect\n")
+        path.write_text("finding_id,verdict (correct|incorrect)\nF-a,correct\nF-b,incorrect\n", encoding="utf-8")
         metric = contradiction_precision(populated(), path)
         assert metric.value == 0.5
 
     def test_an_unlabelled_file_yields_no_number(self, tmp_path):
         path = tmp_path / "review.csv"
-        path.write_text("finding_id,verdict (correct|incorrect)\nF-a,\n")
+        path.write_text("finding_id,verdict (correct|incorrect)\nF-a,\n", encoding="utf-8")
         assert contradiction_precision(populated(), path).value is None
 
 
@@ -157,7 +157,7 @@ class TestBenchmarkInput:
         path.write_text(json.dumps({
             "class_agnostic": {"precision": 0.21, "recall": 0.34, "f1": 0.26},
             "class_aware": {"precision": 0.0, "recall": 0.0, "f1": 0.0},
-        }))
+        }), encoding="utf-8")
         metrics = {m.name: m for m in collect(populated(), benchmark_path=path)}
         assert metrics["defect_detection_precision"].value == 0.21
         assert "not a trained model" in metrics["defect_detection_precision"].status
