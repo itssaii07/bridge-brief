@@ -36,20 +36,53 @@ DEFAULT_PORT = 8765
 
 
 def list_structures(conn, limit: int = 500) -> tuple[list[dict], dict]:
+    """Structures that have something to review, most contradictions first.
+
+    Driven by the tables that have rows, not by ``structures``. The obvious
+    phrasing — select from ``structures`` with a correlated subquery per counter
+    — is O(structures) and collapsed on the real corpus: SQLite preferred
+    ``idx_findings_kind`` over ``idx_findings_struct``, so it rescanned all 7,018
+    contradiction rows for each of 632,140 structures, about 4.4 billion row
+    visits, and the page never loaded. Aggregating the small tables first and
+    joining ``structures`` by primary key is O(findings) and returns immediately.
+    """
     rows = conn.execute(
         """
-        SELECT s.struct_norm, s.state_abbr,
-               (SELECT COUNT(*) FROM findings f
-                 WHERE f.struct_norm = s.struct_norm AND f.kind = 'contradiction') AS contradictions,
-               (SELECT COUNT(*) FROM findings f
-                 WHERE f.struct_norm = s.struct_norm AND f.evidence_tier = 'single_source') AS single_source,
-               (SELECT COUNT(*) FROM images i
-                 WHERE i.struct_norm = s.struct_norm) AS photos,
-               (SELECT COUNT(*) FROM briefs b
-                 WHERE b.struct_norm = s.struct_norm) AS briefs
-          FROM structures s
-         WHERE contradictions > 0 OR single_source > 0 OR photos > 0 OR briefs > 0
-         ORDER BY contradictions DESC, s.struct_norm
+        WITH finding_counts AS (
+            SELECT struct_norm,
+                   SUM(CASE WHEN kind = 'contradiction' THEN 1 ELSE 0 END) AS contradictions,
+                   SUM(CASE WHEN evidence_tier = 'single_source' THEN 1 ELSE 0 END) AS single_source
+              FROM findings
+             GROUP BY struct_norm
+        ),
+        photo_counts AS (
+            SELECT struct_norm, COUNT(*) AS photos
+              FROM images
+             WHERE struct_norm IS NOT NULL
+             GROUP BY struct_norm
+        ),
+        brief_counts AS (
+            SELECT struct_norm, COUNT(*) AS briefs FROM briefs GROUP BY struct_norm
+        ),
+        candidates AS (
+            SELECT struct_norm FROM finding_counts
+            UNION
+            SELECT struct_norm FROM photo_counts
+            UNION
+            SELECT struct_norm FROM brief_counts
+        )
+        SELECT c.struct_norm,
+               s.state_abbr,
+               COALESCE(f.contradictions, 0) AS contradictions,
+               COALESCE(f.single_source, 0)  AS single_source,
+               COALESCE(p.photos, 0)         AS photos,
+               COALESCE(b.briefs, 0)         AS briefs
+          FROM candidates c
+          LEFT JOIN structures     s ON s.struct_norm = c.struct_norm
+          LEFT JOIN finding_counts f ON f.struct_norm = c.struct_norm
+          LEFT JOIN photo_counts   p ON p.struct_norm = c.struct_norm
+          LEFT JOIN brief_counts   b ON b.struct_norm = c.struct_norm
+         ORDER BY contradictions DESC, c.struct_norm
          LIMIT ?
         """,
         (limit,),

@@ -22,6 +22,7 @@ from ..db import DataUnavailable, connect
 from .metrics import (
     Metric, contradiction_precision, corpus_metrics, correction_effort_metric,
     defect_detection, missing_evidence_recall, predictive_alignment,
+    predictive_lift_by_direction,
     source_link_accuracy, unsupported_content_rate,
 )
 
@@ -38,6 +39,7 @@ def collect(conn, *, base_year: int = 2023, check_year: int = 2025,
     metrics += corpus_metrics(conn, base_year)
     metrics.append(contradiction_precision(conn, review_path))
     metrics += predictive_alignment(conn, base_year, check_year)
+    metrics += predictive_lift_by_direction(conn, base_year, check_year)
     metrics += defect_detection(conn, benchmark)
     metrics.append(source_link_accuracy(conn))
     metrics.append(missing_evidence_recall(conn, base_year))

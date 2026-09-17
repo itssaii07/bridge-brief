@@ -310,3 +310,63 @@ class TestLiveServer:
         finally:
             server.shutdown()
             server.server_close()
+
+
+class TestStructureListScales:
+    """The landing page must not be O(number of structures).
+
+    Written after the obvious phrasing of this query made the page unusable on
+    the real corpus. Selecting from `structures` with one correlated subquery
+    per counter let SQLite prefer `idx_findings_kind` over
+    `idx_findings_struct`, so it rescanned every contradiction row for each of
+    632,140 structures — roughly 4.4 billion row visits. The page never loaded.
+
+    A timing assertion would be flaky, so this checks the shape of the plan
+    instead: the query may seek into `structures` by primary key, but it must
+    never scan the table.
+    """
+
+    def test_the_plan_does_not_scan_the_structures_table(self, tmp_path):
+        conn, _ = build_db(tmp_path / "assets.sqlite")
+
+        # Capture the statement list_structures actually runs, rather than
+        # restating it here — a copy in the test would keep passing after the
+        # real query regressed.
+        statements: list[str] = []
+        conn.set_trace_callback(statements.append)
+        list_structures(conn)
+        conn.set_trace_callback(None)
+
+        listing = next(sql for sql in statements if "candidates" in sql.lower())
+        # The trace may or may not have inlined the LIMIT parameter, depending
+        # on the sqlite3 build.
+        args = (500,) if "?" in listing else ()
+        steps = [str(row[3]) for row in
+                 conn.execute("EXPLAIN QUERY PLAN " + listing, args).fetchall()]
+        plan = "\n".join(steps)
+        # SQLite words this as "SCAN structures" on newer builds and
+        # "SCAN TABLE structures AS s" on older ones, so match the shape rather
+        # than either spelling — an assertion that matched only one would pass
+        # vacuously on the other.
+        scans = [step for step in steps
+                 if step.startswith("SCAN") and "structures" in step]
+        assert not scans, (
+            "the structure list is scanning every structure again:\n" + plan
+        )
+
+    def test_it_still_returns_the_structures_that_have_something_to_review(self, tmp_path):
+        conn, _ = build_db(tmp_path / "assets.sqlite")
+        rows, totals = list_structures(conn)
+        assert rows, "a structure with findings should be listed"
+        listed = {row["struct_norm"] for row in rows}
+        flagged = {r[0] for r in conn.execute("SELECT DISTINCT struct_norm FROM findings")}
+        assert flagged <= listed
+        # Counters are still carried, and the state label survives the join.
+        assert all("contradictions" in dict(row) for row in rows)
+        assert totals["structures"] >= len(rows)
+
+    def test_a_structure_with_nothing_to_review_is_not_listed(self, tmp_path):
+        conn, _ = build_db(tmp_path / "assets.sqlite")
+        upsert_structure(conn, "AL999999", struct_raw="999999", state_abbr="AL", year=2023)
+        rows, _ = list_structures(conn)
+        assert "AL999999" not in {row["struct_norm"] for row in rows}

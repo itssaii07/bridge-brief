@@ -71,8 +71,9 @@ class TestPopulated:
     def test_lift_is_flagged_when_there_is_no_control_population(self):
         metrics = {m.name: m for m in collect(populated())}
         # One structure, all of it flagged: there is no control to compare against.
-        assert metrics["control_drop_rate"].value is None
-        assert "control" in metrics["control_drop_rate"].status
+        row = metrics["control_base_rate_direction_matched"]
+        assert row.value is None
+        assert "control" in row.status
 
     def test_source_link_resolution_is_one_when_the_gate_is_working(self):
         conn = populated()

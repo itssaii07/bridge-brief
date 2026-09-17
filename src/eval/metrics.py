@@ -58,7 +58,7 @@ def predictive_alignment(conn, base_year: int, check_year: int) -> list[Metric]:
         status = (f"no contradictions stored for {base_year}; run "
                   f"`python -m src.analysis.contradictions --year {base_year}`")
         return [Metric("predictive_alignment", None, truth, status=status),
-                Metric("control_drop_rate", None, truth, status=status),
+                Metric("control_base_rate_direction_matched", None, truth, status=status),
                 Metric("predictive_lift", None, truth, status=status)]
 
     detail = {
@@ -68,23 +68,70 @@ def predictive_alignment(conn, base_year: int, check_year: int) -> list[Metric]:
         "flagged_unevaluable_excluded": result.flagged_unevaluable,
         "control_evaluable": result.control_evaluable,
         "control_dropped": result.control_dropped,
+        "control_drop_rate": result.control_drop_rate,
+        "control_rose": result.control_rose,
+        "control_rise_rate": result.control_rise_rate,
+        "expected_confirmations": result.expected_confirmations,
+        "by_direction": result.direction_stats(),
     }
     unevaluable = (f"{result.flagged_unevaluable:,} flagged component(s) had no comparable "
                    f"{check_year} rating and are excluded from the denominator")
     return [
         Metric("predictive_alignment", result.predictive_alignment, truth,
                status=unevaluable if result.flagged_unevaluable else "ok", detail=detail),
-        Metric("control_drop_rate", result.control_drop_rate,
-               f"unflagged components with both sources in {base_year}",
-               status="ok" if result.control_evaluable else "no evaluable control population",
+        # The base rate has to match the movement each direction predicts: an
+        # NBI-optimistic flag is confirmed by a downgrade, an NBI-pessimistic one
+        # by an upgrade, and on real records those rates differ by an order of
+        # magnitude (5.9% vs 0.6% in 2023). Reporting the drop rate alone here
+        # left a base-rate row that did not subtract to the lift beside it.
+        Metric("control_base_rate_direction_matched", result.pooled_base_rate,
+               f"unflagged components with both sources in {base_year}, weighted by "
+               "this flag set's mix of directions",
+               status=("ok" if result.control_evaluable
+                       else "no evaluable control population"),
                detail=detail),
         Metric("predictive_lift", result.lift,
-               "predictive alignment minus the control base rate",
+               "predictive alignment minus the direction-matched control base rate",
                status=("ok" if result.lift is None or result.lift > 0
                        else "AT OR BELOW ZERO: the flags carry no predictive information "
                             "on this data"),
                detail=detail),
     ]
+
+
+def predictive_lift_by_direction(conn, base_year: int, check_year: int) -> list[Metric]:
+    """Per-direction lift, each against the base rate for its own movement.
+
+    The pooled figure is dominated by whichever direction has more flags. In the
+    2023 data that is nbi_pessimistic at 81% of findings, which pulled the
+    headline down and hid that nbi_optimistic flags were lifting 6.7 points over
+    their own base rate. A significance figure accompanies each, so a small lift
+    on few flags is not mistaken for a result.
+    """
+    result = validate(conn, base_year=base_year, check_year=check_year)
+    stats = result.direction_stats()
+    if not stats:
+        status = (f"no contradictions stored for {base_year}; run "
+                  f"`python -m src.analysis.contradictions --year {base_year}`")
+        return [Metric("predictive_lift_by_direction", None,
+                       "2025 rating change, split by flag direction", status=status)]
+
+    out: list[Metric] = []
+    for direction, bucket in stats.items():
+        info = bucket.get("significance") or {}
+        p = info.get("p_value")
+        note = "ok"
+        if p is not None:
+            note = (f"{bucket['confirmed']:,} of {bucket['evaluable']:,} evaluable; "
+                    f"{bucket['base_rate']:.1%} base rate; "
+                    f"{info.get('risk_ratio')}x, z={info.get('z')}, "
+                    f"p{'<1e-12' if p < 1e-12 else f'={p:.2g}'}")
+            if p > 0.05:
+                note = "NOT SIGNIFICANT at p=0.05 — " + note
+        out.append(Metric(f"predictive_lift_{direction}", bucket["lift"],
+                          f"{check_year} rating change on {base_year} {direction} flags",
+                          status=note, detail=bucket))
+    return out
 
 
 def defect_detection(conn, benchmark: dict | None) -> list[Metric]:

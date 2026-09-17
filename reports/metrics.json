@@ -1,0 +1,290 @@
+[
+  {
+    "name": "corpus_structures_2023",
+    "value": 621532,
+    "ground_truth": "asset index",
+    "status": "ok",
+    "detail": {}
+  },
+  {
+    "name": "corpus_engine_eligible_2023",
+    "value": 10661,
+    "ground_truth": "structures with both NBI and NBE",
+    "status": "ok",
+    "detail": {}
+  },
+  {
+    "name": "contradiction_precision",
+    "value": null,
+    "ground_truth": "manual review of sampled flags",
+    "status": "no labelled review file; export a sample with `python -m src.analysis.validate --export-review reviews/sample.csv`, label it, then pass --review to this harness",
+    "detail": {}
+  },
+  {
+    "name": "predictive_alignment",
+    "value": 0.041,
+    "ground_truth": "2025 NBI rating change on 2023-flagged bridges",
+    "status": "144 flagged component(s) had no comparable 2025 rating and are excluded from the denominator",
+    "detail": {
+      "flagged_total": 7018,
+      "flagged_evaluable": 6874,
+      "flagged_confirmed": 282,
+      "flagged_unevaluable_excluded": 144,
+      "control_evaluable": 17652,
+      "control_dropped": 1042,
+      "control_drop_rate": 0.059,
+      "control_rose": 111,
+      "control_rise_rate": 0.0063,
+      "expected_confirmations": 110.1,
+      "by_direction": {
+        "nbi_optimistic": {
+          "total": 1304,
+          "confirmed": 160,
+          "unchanged": 1086,
+          "contrary": 22,
+          "unevaluable": 36,
+          "evaluable": 1268,
+          "alignment": 0.1262,
+          "base_rate": 0.059,
+          "lift": 0.0672,
+          "significance": {
+            "z": 9.47,
+            "p_value": 2.814904567095953e-21,
+            "risk_ratio": 2.14
+          }
+        },
+        "nbi_pessimistic": {
+          "total": 5714,
+          "confirmed": 122,
+          "unchanged": 5323,
+          "contrary": 161,
+          "unevaluable": 108,
+          "evaluable": 5606,
+          "alignment": 0.0218,
+          "base_rate": 0.0063,
+          "lift": 0.0155,
+          "significance": {
+            "z": 10.14,
+            "p_value": 3.8497494810814135e-24,
+            "risk_ratio": 3.46
+          }
+        }
+      }
+    }
+  },
+  {
+    "name": "control_base_rate_direction_matched",
+    "value": 0.016,
+    "ground_truth": "unflagged components with both sources in 2023, weighted by this flag set's mix of directions",
+    "status": "ok",
+    "detail": {
+      "flagged_total": 7018,
+      "flagged_evaluable": 6874,
+      "flagged_confirmed": 282,
+      "flagged_unevaluable_excluded": 144,
+      "control_evaluable": 17652,
+      "control_dropped": 1042,
+      "control_drop_rate": 0.059,
+      "control_rose": 111,
+      "control_rise_rate": 0.0063,
+      "expected_confirmations": 110.1,
+      "by_direction": {
+        "nbi_optimistic": {
+          "total": 1304,
+          "confirmed": 160,
+          "unchanged": 1086,
+          "contrary": 22,
+          "unevaluable": 36,
+          "evaluable": 1268,
+          "alignment": 0.1262,
+          "base_rate": 0.059,
+          "lift": 0.0672,
+          "significance": {
+            "z": 9.47,
+            "p_value": 2.814904567095953e-21,
+            "risk_ratio": 2.14
+          }
+        },
+        "nbi_pessimistic": {
+          "total": 5714,
+          "confirmed": 122,
+          "unchanged": 5323,
+          "contrary": 161,
+          "unevaluable": 108,
+          "evaluable": 5606,
+          "alignment": 0.0218,
+          "base_rate": 0.0063,
+          "lift": 0.0155,
+          "significance": {
+            "z": 10.14,
+            "p_value": 3.8497494810814135e-24,
+            "risk_ratio": 3.46
+          }
+        }
+      }
+    }
+  },
+  {
+    "name": "predictive_lift",
+    "value": 0.025,
+    "ground_truth": "predictive alignment minus the direction-matched control base rate",
+    "status": "ok",
+    "detail": {
+      "flagged_total": 7018,
+      "flagged_evaluable": 6874,
+      "flagged_confirmed": 282,
+      "flagged_unevaluable_excluded": 144,
+      "control_evaluable": 17652,
+      "control_dropped": 1042,
+      "control_drop_rate": 0.059,
+      "control_rose": 111,
+      "control_rise_rate": 0.0063,
+      "expected_confirmations": 110.1,
+      "by_direction": {
+        "nbi_optimistic": {
+          "total": 1304,
+          "confirmed": 160,
+          "unchanged": 1086,
+          "contrary": 22,
+          "unevaluable": 36,
+          "evaluable": 1268,
+          "alignment": 0.1262,
+          "base_rate": 0.059,
+          "lift": 0.0672,
+          "significance": {
+            "z": 9.47,
+            "p_value": 2.814904567095953e-21,
+            "risk_ratio": 2.14
+          }
+        },
+        "nbi_pessimistic": {
+          "total": 5714,
+          "confirmed": 122,
+          "unchanged": 5323,
+          "contrary": 161,
+          "unevaluable": 108,
+          "evaluable": 5606,
+          "alignment": 0.0218,
+          "base_rate": 0.0063,
+          "lift": 0.0155,
+          "significance": {
+            "z": 10.14,
+            "p_value": 3.8497494810814135e-24,
+            "risk_ratio": 3.46
+          }
+        }
+      }
+    }
+  },
+  {
+    "name": "predictive_lift_nbi_optimistic",
+    "value": 0.0672,
+    "ground_truth": "2025 rating change on 2023 nbi_optimistic flags",
+    "status": "160 of 1,268 evaluable; 5.9% base rate; 2.14x, z=9.47, p<1e-12",
+    "detail": {
+      "total": 1304,
+      "confirmed": 160,
+      "unchanged": 1086,
+      "contrary": 22,
+      "unevaluable": 36,
+      "evaluable": 1268,
+      "alignment": 0.1262,
+      "base_rate": 0.059,
+      "lift": 0.0672,
+      "significance": {
+        "z": 9.47,
+        "p_value": 2.814904567095953e-21,
+        "risk_ratio": 2.14
+      }
+    }
+  },
+  {
+    "name": "predictive_lift_nbi_pessimistic",
+    "value": 0.0155,
+    "ground_truth": "2025 rating change on 2023 nbi_pessimistic flags",
+    "status": "122 of 5,606 evaluable; 0.6% base rate; 3.46x, z=10.14, p<1e-12",
+    "detail": {
+      "total": 5714,
+      "confirmed": 122,
+      "unchanged": 5323,
+      "contrary": 161,
+      "unevaluable": 108,
+      "evaluable": 5606,
+      "alignment": 0.0218,
+      "base_rate": 0.0063,
+      "lift": 0.0155,
+      "significance": {
+        "z": 10.14,
+        "p_value": 3.8497494810814135e-24,
+        "risk_ratio": 3.46
+      }
+    }
+  },
+  {
+    "name": "defect_detection_precision",
+    "value": null,
+    "ground_truth": "CODEBRIM annotations",
+    "status": "no benchmark has been run; run `python -m src.eval.codebrim_benchmark --json reports/codebrim.json`",
+    "detail": {}
+  },
+  {
+    "name": "defect_detection_recall",
+    "value": null,
+    "ground_truth": "CODEBRIM annotations",
+    "status": "no benchmark has been run; run `python -m src.eval.codebrim_benchmark --json reports/codebrim.json`",
+    "detail": {}
+  },
+  {
+    "name": "defect_detection_f1",
+    "value": null,
+    "ground_truth": "CODEBRIM annotations",
+    "status": "no benchmark has been run; run `python -m src.eval.codebrim_benchmark --json reports/codebrim.json`",
+    "detail": {}
+  },
+  {
+    "name": "source_link_resolution",
+    "value": 1.0,
+    "ground_truth": "artifacts table (mechanical half; semantic half is manual)",
+    "status": "ok",
+    "detail": {
+      "citations": 58,
+      "resolved": 58
+    }
+  },
+  {
+    "name": "missing_evidence_recall",
+    "value": 1.0,
+    "ground_truth": "structures genuinely lacking NBE records",
+    "status": "ok",
+    "detail": {
+      "gaps_present": 37779,
+      "gaps_recorded": 37779
+    }
+  },
+  {
+    "name": "unsupported_content_rate",
+    "value": 0.0,
+    "ground_truth": "blocked_unsupported / total generated sentences",
+    "status": "ok",
+    "detail": {
+      "total_sentences": 8,
+      "blocked": 0
+    }
+  },
+  {
+    "name": "correction_effort_edits_per_finding",
+    "value": null,
+    "ground_truth": "review actions recorded in the UI",
+    "status": "no finding has been reviewed yet",
+    "detail": {
+      "findings_reviewed": 0,
+      "approve": 0,
+      "reject": 0,
+      "edit": 0,
+      "comment": 0,
+      "edits_per_finding": null,
+      "rejections_per_finding": null,
+      "total_actions": 0
+    }
+  }
+]
