@@ -1,0 +1,133 @@
+{
+  "detector": "baseline_edge_energy@1",
+  "iou_threshold": 0.5,
+  "corpus": "dacl10k",
+  "images_scored": 7910,
+  "images_without_damage": 566,
+  "images_skipped": 0,
+  "detections": 16871,
+  "annotations": 55581,
+  "class_aware": {
+    "tp": 0,
+    "fp": 16871,
+    "fn": 55581,
+    "precision": 0.0,
+    "recall": 0.0,
+    "f1": 0.0
+  },
+  "class_agnostic": {
+    "tp": 211,
+    "fp": 16660,
+    "fn": 55370,
+    "precision": 0.0125,
+    "recall": 0.0038,
+    "f1": 0.0058
+  },
+  "per_class": {
+    "alligator_crack": {
+      "tp": 0,
+      "fp": 0,
+      "fn": 424,
+      "precision": null,
+      "recall": 0.0,
+      "f1": null
+    },
+    "cavity": {
+      "tp": 0,
+      "fp": 0,
+      "fn": 9271,
+      "precision": null,
+      "recall": 0.0,
+      "f1": null
+    },
+    "corrosion_stain": {
+      "tp": 0,
+      "fp": 0,
+      "fn": 14720,
+      "precision": null,
+      "recall": 0.0,
+      "f1": null
+    },
+    "crack": {
+      "tp": 0,
+      "fp": 0,
+      "fn": 3626,
+      "precision": null,
+      "recall": 0.0,
+      "f1": null
+    },
+    "efflorescence": {
+      "tp": 0,
+      "fp": 0,
+      "fn": 3965,
+      "precision": null,
+      "recall": 0.0,
+      "f1": null
+    },
+    "exposed_bars": {
+      "tp": 0,
+      "fp": 0,
+      "fn": 2000,
+      "precision": null,
+      "recall": 0.0,
+      "f1": null
+    },
+    "graffiti": {
+      "tp": 0,
+      "fp": 0,
+      "fn": 2200,
+      "precision": null,
+      "recall": 0.0,
+      "f1": null
+    },
+    "hollowareas": {
+      "tp": 0,
+      "fp": 0,
+      "fn": 1557,
+      "precision": null,
+      "recall": 0.0,
+      "f1": null
+    },
+    "restformwork": {
+      "tp": 0,
+      "fp": 0,
+      "fn": 1022,
+      "precision": null,
+      "recall": 0.0,
+      "f1": null
+    },
+    "rockpocket": {
+      "tp": 0,
+      "fp": 0,
+      "fn": 617,
+      "precision": null,
+      "recall": 0.0,
+      "f1": null
+    },
+    "spallation": {
+      "tp": 0,
+      "fp": 0,
+      "fn": 9884,
+      "precision": null,
+      "recall": 0.0,
+      "f1": null
+    },
+    "weathering": {
+      "tp": 0,
+      "fp": 0,
+      "fn": 4634,
+      "precision": null,
+      "recall": 0.0,
+      "f1": null
+    },
+    "wetspot": {
+      "tp": 0,
+      "fp": 0,
+      "fn": 1661,
+      "precision": null,
+      "recall": 0.0,
+      "f1": null
+    }
+  },
+  "skipped_reasons": {}
+}

@@ -135,17 +135,26 @@ def predictive_lift_by_direction(conn, base_year: int, check_year: int) -> list[
 
 
 def defect_detection(conn, benchmark: dict | None) -> list[Metric]:
-    """Detector precision/recall, from a benchmark report if one has been run."""
-    truth = "CODEBRIM annotations"
+    """Detector precision/recall, from a benchmark report if one has been run.
+
+    The ground-truth source is named from the report rather than assumed, because
+    CLAUDE.md specifies CODEBRIM and the corpus actually in use is dacl10k — the
+    published CODEBRIM archive is malformed (ASSUMPTIONS.md H6). A metrics table
+    that said "CODEBRIM annotations" over a dacl10k run would misattribute the
+    measurement.
+    """
+    corpus = (benchmark or {}).get("corpus", "dacl10k")
+    truth = f"{corpus} annotations"
     if not benchmark:
         status = ("no benchmark has been run; run "
-                  "`python -m src.eval.codebrim_benchmark --json reports/codebrim.json`")
+                  "`python -m src.eval.codebrim_benchmark --corpus dacl10k "
+                  "--json reports/detector.json`")
         return [Metric("defect_detection_precision", None, truth, status=status),
                 Metric("defect_detection_recall", None, truth, status=status),
                 Metric("defect_detection_f1", None, truth, status=status)]
     agnostic = benchmark.get("class_agnostic", {})
-    note = ("class-agnostic (localisation only); the shipped baseline is not a trained "
-            "model and its class-aware score is zero by construction")
+    note = (f"class-agnostic (localisation only) over {corpus}; the shipped baseline "
+            "is not a trained model and its class-aware score is zero by construction")
     return [
         Metric("defect_detection_precision", agnostic.get("precision"), truth,
                status=note, detail=benchmark.get("class_aware", {})),

@@ -138,19 +138,48 @@ def parse_labelme_json(path: Path) -> list[Detection]:
     benchmark scores localisation by IoU over boxes, so every polygon is reduced
     to its axis-aligned bounding box — the tightest box containing the points.
 
-    That reduction is lossy in the detector's favour and the report says so: a
-    polygon's bounding box is always at least as large as the polygon, so a
-    detection that overlaps the box but not the damage can still score as a hit.
-    It is the standard way to use a segmentation set for detection, and the
-    alternative — scoring mask IoU — would measure a different thing from what
-    the shipped region-based detector produces.
+    Two ways that reduction is inexact, both recorded rather than hidden, and
+    both meaning the resulting numbers are **not comparable to a detection score
+    on a purpose-built detection set**:
+
+    * **It flatters the detector.** A polygon's bounding box is always at least as
+      large as the polygon, so a detection overlapping the box but missing the
+      damage inside it can still score as a hit.
+    * **It penalises the detector.** dacl10k is explicitly *not* instance-level —
+      its README states that overlapping polygons of one class are merged into a
+      single mask for its own mIoU evaluation. Treated as boxes they stay
+      separate, so one region of damage described by several polygons becomes
+      several annotations, and a detector that covers it with one box scores one
+      true positive and the rest as false negatives.
+
+    The alternative, scoring mask IoU, would measure something the shipped
+    region-based detector does not produce. Reducing to boxes is the standard way
+    to use a segmentation set for detection; the caveats belong in the report.
 
     Non-damage classes are dropped here (see :data:`NON_DAMAGE_CLASSES`).
+
+    **An empty result is a valid answer, not a failure.** 566 of dacl10k's 7,910
+    annotated images label only component classes: they are images of a bridge
+    with no damage annotated on it. Raising for those — which this did at first —
+    discarded 7% of the corpus, and with it every false positive the detector
+    produced on exactly the images where any detection must be wrong. The
+    format-mismatch guard that used to live here lives in :func:`run` instead,
+    where it belongs: it checks that the corpus as a whole yielded annotations.
     """
     try:
         payload = json.loads(Path(path).read_text(encoding="utf-8"))
     except (json.JSONDecodeError, UnicodeDecodeError) as exc:
         raise DataUnavailable(f"cannot parse annotation file {path}: {exc}") from exc
+
+    if not isinstance(payload, dict) or "shapes" not in payload:
+        # No `shapes` key at all is a format mismatch, and must be loud. An empty
+        # or damage-free `shapes` list is a real annotation of an undamaged image.
+        raise DataUnavailable(
+            f"{path} has no 'shapes' key.\n"
+            "The assumed labelme layout (ASSUMPTIONS.md H6b) does not match this "
+            "corpus. Fix src/eval/codebrim_benchmark.py::parse_labelme_json — that "
+            "is the only place that needs to change."
+        )
 
     boxes: list[Detection] = []
     for shape in payload.get("shapes") or []:
@@ -186,21 +215,16 @@ def parse_annotation_file(path: Path) -> list[Detection]:
     with ``source = 'annotation'`` and scored only as ground truth.
 
     Raises:
-        DataUnavailable: if the file contains no parseable object boxes, so that a
+        DataUnavailable: if the file's structure is not recognised, so that a
             format mismatch is reported rather than scored as "no defects".
+
+    An empty list is **not** an error: it means this image has no damage
+    annotated, which is a real ground truth that any detection on it contradicts.
+    :func:`run` holds the corpus-wide guard against a format mismatch.
     """
     path = Path(path)
     if path.suffix.lower() == ".json":
-        boxes = parse_labelme_json(path)
-        if not boxes:
-            raise DataUnavailable(
-                f"{path} yielded no damage polygons.\n"
-                "Either it annotates only non-damage classes, or the assumed "
-                "labelme layout (ASSUMPTIONS.md H6b) does not match. Fix "
-                "src/eval/codebrim_benchmark.py::parse_labelme_json — that is the "
-                "only place that needs to change."
-            )
-        return boxes
+        return parse_labelme_json(path)
 
     try:
         root = ET.fromstring(path.read_bytes())
@@ -273,6 +297,9 @@ class BenchmarkReport:
     #: is only comparable between runs over the same corpus.
     corpus: str = "dacl10k"
     images_scored: int = 0
+    #: Scored images whose annotation records no damage — real negatives, where
+    #: every detection is necessarily a false positive.
+    images_without_damage: int = 0
     images_skipped: int = 0
     detections: int = 0
     annotations: int = 0
@@ -415,6 +442,11 @@ def run(*, root: Path | None = None, detector_name: str = "baseline",
             continue
 
         report.images_scored += 1
+        if not annotations:
+            # A real negative: the image is annotated, and has no damage on it.
+            # Counted so it stays visible, and scored, so every detection here
+            # lands in the false-positive column where it belongs.
+            report.images_without_damage += 1
         report.detections += len(detections)
         report.annotations += len(annotations)
 
@@ -444,6 +476,18 @@ def run(*, root: Path | None = None, detector_name: str = "baseline",
                "precision": s.precision, "recall": s.recall, "f1": s.f1}
         for name, s in sorted(per_class.items())
     }
+
+    # The corpus-wide format guard. A single annotation file with no damage is
+    # ordinary; *every* file yielding nothing means the layout assumption is
+    # wrong, and reporting that as "the detector missed nothing" would be the
+    # worst possible failure — a format mismatch dressed up as a perfect score.
+    if report.images_scored and report.annotations == 0:
+        raise DataUnavailable(
+            f"scored {report.images_scored:,} image(s) and found no annotations at "
+            "all.\nThe assumed annotation layout does not match this corpus. Fix "
+            "src/eval/codebrim_benchmark.py::parse_annotation_file — that is the "
+            "only place that needs to change."
+        )
     return report
 
 
@@ -451,6 +495,8 @@ def render(report: BenchmarkReport) -> str:
     fmt = lambda v: "n/a" if v is None else f"{v:.4f}"
     out = ["=" * 72, f"CODEBRIM DETECTOR BENCHMARK — {report.detector}", "=" * 72, "",
            f"images scored      {report.images_scored:>8,}",
+           f"  of which no damage{report.images_without_damage:>8,}"
+           "   (real negatives: any detection here is a false positive)",
            f"images skipped     {report.images_skipped:>8,}",
            f"detections         {report.detections:>8,}",
            f"annotations        {report.annotations:>8,}",
@@ -464,6 +510,14 @@ def render(report: BenchmarkReport) -> str:
     out.append("")
     if report.per_class:
         out.append("Per annotation class (localisation only)")
+        out.append("A detector that emits no class, like the shipped baseline, "
+                   "contributes no")
+        out.append("detections to any class here: every row reads TP=0, FP=0, "
+                   "precision n/a,")
+        out.append("and FN equal to that class's whole annotation count. These rows "
+                   "only carry")
+        out.append("information once a classifying detector is registered.")
+        out.append("")
         out.append(f"{'class':<20}{'TP':>8}{'FP':>8}{'FN':>8}{'precision':>12}{'recall':>10}")
         out.append("-" * 66)
         for name, scores in report.per_class.items():
@@ -481,6 +535,24 @@ def render(report: BenchmarkReport) -> str:
         "because it localises without classifying. These numbers are a floor for the\n"
         "pipeline, not a claim about achievable detection performance."
     )
+    if report.corpus == "dacl10k":
+        out.append("")
+        out.append(
+            "NOTE: dacl10k is a semantic-segmentation dataset, scored here by reducing\n"
+            "each annotated polygon to its bounding box. Two consequences, pulling in\n"
+            "opposite directions:\n"
+            "  - a box always contains its polygon, so a detection that overlaps the\n"
+            "    box but misses the damage inside it still scores as a hit;\n"
+            "  - dacl10k is not instance-level (its README merges overlapping polygons\n"
+            "    of one class into a single mask), so one region described by several\n"
+            "    polygons becomes several annotations here, and a detector covering it\n"
+            "    with a single box takes the remainder as false negatives.\n"
+            "These figures are therefore NOT comparable with a detection score on a\n"
+            "purpose-built detection set, nor with published dacl10k mIoU results.\n"
+            "dacl10k is in use because the CODEBRIM archive CLAUDE.md specifies is\n"
+            "malformed as published (ASSUMPTIONS.md H6/H6b). Licence CC BY-NC 4.0:\n"
+            "Flotzinger, Rosch and Braml, WACV 2024, arXiv:2309.00460."
+        )
     return "\n".join(out)
 
 

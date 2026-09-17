@@ -450,20 +450,88 @@ class TestLabelmeAnnotationParsing:
         ])
         assert len(B.parse_annotation_file(path)) == 1
 
-    def test_an_annotation_of_components_only_is_reported_not_scored_as_clean(self, tmp_path):
-        """Otherwise an image full of bearings scores as "no defects present"."""
+    def test_an_annotation_of_components_only_is_a_real_negative(self, tmp_path):
+        """566 of dacl10k's 7,910 images annotate components but no damage.
+
+        These are images of an undamaged bridge. Raising for them — which this
+        code did at first — discarded 7% of the corpus, and with it every false
+        positive the detector produced on exactly the images where any detection
+        must be wrong. An empty box list is the correct answer.
+        """
         path = self._write(tmp_path / "f.json", [{
             "label": "Bearing", "shape_type": "polygon",
             "points": [[0, 0], [40, 0], [40, 40], [0, 40]]}])
-        with pytest.raises(DataUnavailable) as exc:
-            B.parse_annotation_file(path)
-        assert "parse_labelme_json" in str(exc.value)
+        assert B.parse_annotation_file(path) == []
+
+    def test_an_empty_shapes_list_is_a_real_negative_too(self, tmp_path):
+        assert B.parse_annotation_file(self._write(tmp_path / "h.json", [])) == []
 
     def test_malformed_json_points_at_the_one_change_point(self, tmp_path):
         path = tmp_path / "g.json"
         path.write_text("{not json", encoding="utf-8")
         with pytest.raises(DataUnavailable):
             B.parse_annotation_file(path)
+
+    def test_a_file_with_no_shapes_key_at_all_is_a_format_mismatch(self, tmp_path):
+        """Absent structure is loud; present-but-empty structure is data."""
+        path = tmp_path / "i.json"
+        path.write_text(json.dumps({"imageName": "x.jpg", "regions": []}),
+                        encoding="utf-8")
+        with pytest.raises(DataUnavailable) as exc:
+            B.parse_annotation_file(path)
+        assert "parse_labelme_json" in str(exc.value)
+
+
+class TestUndamagedImagesAreScored:
+    """An image with no damage is a negative to score, not an image to skip."""
+
+    #: A damage polygon, so the corpus as a whole has annotations and the
+    #: corpus-wide format guard in run() does not fire.
+    DAMAGE = [{"label": "Crack", "shape_type": "polygon",
+               "points": [[10, 10], [300, 10], [300, 300], [10, 300]]}]
+
+    def _corpus(self, tmp_path, undamaged_shapes, *, with_damaged=True):
+        base = tmp_path / "dacl10k"
+        for split in ("train", "validation"):
+            (base / "images" / split).mkdir(parents=True)
+            (base / "annotations" / split).mkdir(parents=True)
+
+        make_textured_image(base / "images" / "train" / "undamaged.png")
+        (base / "annotations" / "train" / "undamaged.json").write_text(
+            json.dumps({"imageName": "undamaged.png", "shapes": undamaged_shapes}),
+            encoding="utf-8")
+
+        if with_damaged:
+            make_textured_image(base / "images" / "validation" / "damaged.png")
+            (base / "annotations" / "validation" / "damaged.json").write_text(
+                json.dumps({"imageName": "damaged.png", "shapes": self.DAMAGE}),
+                encoding="utf-8")
+        return base
+
+    def test_detections_on_an_undamaged_image_count_as_false_positives(self, tmp_path):
+        self._corpus(tmp_path, [{"label": "Bearing", "shape_type": "polygon",
+                                 "points": [[0, 0], [40, 0], [40, 40], [0, 40]]}])
+        report = B.run(root=tmp_path, corpus="dacl10k", log=lambda *a: None)
+        assert report.images_scored == 2
+        assert report.images_without_damage == 1
+        assert report.images_skipped == 0
+        # The undamaged image is textured, so it yields detections — and with no
+        # damage annotated on it, every one of them has to be a false positive.
+        assert report.detections > 0
+        assert report.class_agnostic.fp > 0
+
+    def test_the_count_of_undamaged_images_is_in_the_report(self, tmp_path):
+        self._corpus(tmp_path, [])
+        report = B.run(root=tmp_path, corpus="dacl10k", log=lambda *a: None)
+        assert report.images_without_damage == 1
+        assert "no damage" in B.render(report)
+
+    def test_a_corpus_that_yields_no_annotations_at_all_fails_loudly(self, tmp_path):
+        """A format mismatch must never read as "the detector missed nothing"."""
+        self._corpus(tmp_path, [], with_damaged=False)
+        with pytest.raises(DataUnavailable) as exc:
+            B.run(root=tmp_path, corpus="dacl10k", log=lambda *a: None)
+        assert "no annotations at all" in str(exc.value)
 
 
 class TestAnnotationIndex:

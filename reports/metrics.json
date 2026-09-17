@@ -222,23 +222,30 @@
   },
   {
     "name": "defect_detection_precision",
-    "value": null,
-    "ground_truth": "CODEBRIM annotations",
-    "status": "no benchmark has been run; run `python -m src.eval.codebrim_benchmark --json reports/codebrim.json`",
-    "detail": {}
+    "value": 0.0125,
+    "ground_truth": "dacl10k annotations",
+    "status": "class-agnostic (localisation only) over dacl10k; the shipped baseline is not a trained model and its class-aware score is zero by construction",
+    "detail": {
+      "tp": 0,
+      "fp": 16871,
+      "fn": 55581,
+      "precision": 0.0,
+      "recall": 0.0,
+      "f1": 0.0
+    }
   },
   {
     "name": "defect_detection_recall",
-    "value": null,
-    "ground_truth": "CODEBRIM annotations",
-    "status": "no benchmark has been run; run `python -m src.eval.codebrim_benchmark --json reports/codebrim.json`",
+    "value": 0.0038,
+    "ground_truth": "dacl10k annotations",
+    "status": "class-agnostic (localisation only) over dacl10k; the shipped baseline is not a trained model and its class-aware score is zero by construction",
     "detail": {}
   },
   {
     "name": "defect_detection_f1",
-    "value": null,
-    "ground_truth": "CODEBRIM annotations",
-    "status": "no benchmark has been run; run `python -m src.eval.codebrim_benchmark --json reports/codebrim.json`",
+    "value": 0.0058,
+    "ground_truth": "dacl10k annotations",
+    "status": "class-agnostic (localisation only) over dacl10k; the shipped baseline is not a trained model and its class-aware score is zero by construction",
     "detail": {}
   },
   {
