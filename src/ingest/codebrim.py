@@ -39,6 +39,28 @@ def corpus_item_id(path: Path, root: Path) -> str:
     return "_".join(relative.parts)
 
 
+#: Directories that archives carry but that hold no real content. The published
+#: CODEBRIM zip was created on macOS and contains a ``__MACOSX`` tree.
+JUNK_DIRS = frozenset({"__macosx", ".git", ".ipynb_checkpoints"})
+
+
+def is_archive_junk(path: Path) -> bool:
+    """True for files an archiver added that are not real content.
+
+    macOS zips carry a ``__MACOSX`` tree of AppleDouble stubs named ``._original``.
+    Those stubs keep the original file's extension, so a suffix test alone reads
+    ``__MACOSX/dataset/._DSC_0042.jpg`` as a JPEG. It is not one: it is a few
+    hundred bytes of resource fork, and the detector would fail to decode it.
+
+    Filtering them at discovery is right rather than tolerant: they were never
+    evidence, so counting them as unreadable images would overstate how much of
+    the corpus we failed on.
+    """
+    if any(part.lower() in JUNK_DIRS for part in path.parts):
+        return True
+    return path.name.startswith("._") or path.name == ".DS_Store"
+
+
 def find_images(root: Path | None = None) -> tuple[Path, list[Path]]:
     """Locate CODEBRIM images under ``data/raw/codebrim/``."""
     directory = (root or RAW_ROOT) / CORPUS
@@ -49,7 +71,8 @@ def find_images(root: Path | None = None) -> tuple[Path, list[Path]]:
             "and unpack them there. Nothing is downloaded automatically."
         )
     images = sorted(p for p in directory.rglob("*")
-                    if p.is_file() and p.suffix.lower() in IMAGE_SUFFIXES)
+                    if p.is_file() and p.suffix.lower() in IMAGE_SUFFIXES
+                    and not is_archive_junk(p))
     if not images:
         raise DataUnavailable(
             f"{directory} exists but contains no image files "

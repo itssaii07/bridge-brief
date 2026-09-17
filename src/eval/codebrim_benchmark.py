@@ -239,7 +239,18 @@ def run(*, root: Path | None = None, detector_name: str = "baseline",
             log(f"  [warn] {exc}")
             continue
 
-        detections = detector.detect(image_path)
+        try:
+            detections = detector.detect(image_path)
+        except DetectorUnavailable as exc:
+            # A single unreadable file must not destroy a long run. It is counted
+            # and named in the report, so "we could not look at this one" stays
+            # visible rather than silently scoring as "found no defects".
+            report.images_skipped += 1
+            key = "image could not be decoded"
+            report.skipped_reasons[key] = report.skipped_reasons.get(key, 0) + 1
+            log(f"  [warn] {image_path.name}: {exc}")
+            continue
+
         report.images_scored += 1
         report.detections += len(detections)
         report.annotations += len(annotations)
