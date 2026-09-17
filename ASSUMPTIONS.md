@@ -172,39 +172,59 @@ thresholds. These are mine, they are all named constants in one block at the top
 module, and every finding records the threshold values that produced it so a later
 re-tune is auditable.
 
-**F1. NBI rating bands.** 0–4 = poor, 5–6 = fair, 7–9 = good. This follows the FHWA
-"good/fair/poor" classification used in the National Bridge Inventory condition reporting.
+**F1. NBI rating bands.** 0-4 = poor, 5-6 = fair, 7-9 = good, following the FHWA
+good/fair/poor classification used in National Bridge Inventory condition reporting.
 
-**F2. NBE deterioration fraction.** For a component, `deteriorated_fraction =
-(CS3 + CS4 quantity) / total quantity` across that component's mapped elements. CS3 and
-CS4 are "poor" and "severe"; CS2 ("fair") is deliberately excluded from the numerator
-because a bridge with most of its area in CS2 and a rating of 6 is not a contradiction.
+**F2. Element-implied bands.** For a component, `deteriorated_fraction =
+(CS3 + CS4 quantity) / total mapped quantity`. CS2 ("fair") is deliberately excluded from
+the numerator: a bridge with most of its area in CS2 and a rating of 6 is not a
+contradiction. The implied band is then:
 
-**F3. A contradiction is flagged when the two disagree by more than a band.** Concretely:
-NBI says *good* (7–9) while the deteriorated fraction is ≥ 10%, or NBI says *good/fair*
-(≥ 5) while the fraction is ≥ 25%, or the inverse case — NBI says *poor* (≤ 4) while the
-deteriorated fraction is ≤ 2% and the element data is substantial. The inverse case is
-included because it is equally a disagreement between official records; suppressing it
-would bias the engine toward one direction.
+- **poor** — `deteriorated_fraction >= 0.20`, or `CS4 fraction >= 0.02` (CS4 is "severe";
+  even a small severe fraction is not a good component)
+- **fair** — `deteriorated_fraction >= 0.05`, **or** absolute deteriorated quantity
+  `>= 250 units`
+- **good** — otherwise
 
-**F4. Minimum quantity gate.** A component with a total mapped quantity below
-`MIN_TOTAL_QTY` (100 units) does not produce a contradiction. Below that, one small
-element in CS3 swings the fraction to a large number and the finding is noise. This is
-the single threshold I would most want to tune against real distributions.
+**F3. The absolute-quantity rule exists to reproduce the worked example in `CLAUDE.md`.**
+That example — deck rated 7, 340 sq ft of deck in CS3 — is a contradiction by
+specification, but on a typical 8,000 sq ft deck it is only 4.3% deteriorated and a
+fraction-only rule would miss it. `ABS_DETERIORATED_QTY = 250` makes a materially large
+defect area count regardless of how large the denominator is. The units are whatever the
+source publishes, which means the constant is only meaningful for area-scaled elements;
+this is a real weakness of the rule and a thing to revisit against real data.
 
-**F5. Severity is continuous, not a label.** `severity = clamp(distance_in_bands / 3 ×
-magnitude_factor)`, where magnitude scales with how far past the threshold the
-deteriorated fraction sits. Both the raw inputs and the score are stored.
+**F4. A contradiction is a disagreement of one band or more**, in either direction, once
+the gates pass. The NBI-pessimistic direction (rating worse than the elements) is
+additionally required to have `deteriorated_fraction <= 0.02` — the elements must be
+near-pristine before we will call a poor rating a disagreement, since a low rating often
+reflects something an element inspection does not capture. Both directions are flagged
+because suppressing the second would bias the engine toward the story it is looking for.
 
-**F6. Confidence is not severity.** Confidence expresses how much we trust the
-*observation*, and is reduced when the total quantity is near the gate, when any mapped
-element carries a null quantity, or when elements are ambiguous (E2). Severity expresses
-how bad the disagreement is. They are separate columns and separately displayed.
+**F5. Minimum quantity gate.** A component whose total mapped quantity is below
+`MIN_TOTAL_QTY = 100` produces no contradiction; below that, one small element in CS3
+swings the fraction and the finding is noise. Structures gated out are reported as
+single-source, never as agreement. This is the single threshold I would most want to tune
+against real distributions.
 
-**F7. Every contradiction finding is tier `conflicting` by construction.** That is what it
-is. Single-source condition findings (NBI present, no NBE for that structure) are
-`single_source`; a finding where NBI and NBE agree is `corroborated`. The engine emits
-all three so the UI never has to infer a tier.
+**F6. Severity is continuous:** `min(1, base * (0.8 + 0.4 * magnitude))` where
+`base = band_distance / 2` and `magnitude` scales with how far past the deciding threshold
+the element evidence sits. A one-band disagreement scores 0.4-0.6, a two-band
+disagreement 0.8-1.0 — band distance always dominates.
+
+**F7. Confidence is not severity.** Confidence expresses trust in the *observation* and is
+reduced, with a stated reason attached to the finding, when the total quantity is near the
+gate, when a mapped element reported no quantity, when an ambiguous element is in the
+roll-up, or when the denominator had to be inferred. Severity expresses how bad the
+disagreement is. They are separate columns, separately displayed, and floored at 0.3.
+
+**F8. Every finding records the threshold values that produced it** in its detail payload,
+so a later re-tune is auditable rather than archaeological.
+
+**F9. All three tiers are emitted, never inferred by the UI.** A contradiction is
+`conflicting` by construction. Agreement between NBI and NBE is `corroborated`. NBI with
+no element data to check it — or with a quantity too small to reason from — is
+`single_source` with confidence capped at 0.6.
 
 ---
 
