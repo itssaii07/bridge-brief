@@ -468,6 +468,15 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     root = Path(args.raw_root) if args.raw_root else None
+    # Locate the source files BEFORE opening the database, so that running this
+    # with no data on disk reports the absence and leaves no empty index behind.
+    try:
+        for year in args.year:
+            find_files(year, root)
+    except DataUnavailable as exc:
+        print(f"\nERROR: {exc}", file=sys.stderr)
+        return 2
+
     conn = connect(args.db)
     try:
         for year in args.year:

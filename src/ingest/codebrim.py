@@ -103,9 +103,17 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--limit", type=int, default=None)
     args = parser.parse_args(argv)
 
+    root = Path(args.raw_root) if args.raw_root else None
+    # Confirm the corpus is present before creating anything under data/derived.
+    try:
+        find_images(root)
+    except DataUnavailable as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        return 2
+
     conn = connect(args.db)
     try:
-        ingest(conn, root=Path(args.raw_root) if args.raw_root else None, limit=args.limit)
+        ingest(conn, root=root, limit=args.limit)
     except DataUnavailable as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 2
