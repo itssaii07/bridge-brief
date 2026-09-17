@@ -332,3 +332,60 @@ precision from the labels a human puts back. It does not score itself.
 5. **Whether NBE `total_qty` is published per element or must be summed from the four
    condition states.** The parser handles both and records which it used, but which is
    authoritative affects F2.
+
+---
+
+## L. Things decided while building that nobody asked about
+
+**L1. The review UI is stdlib `http.server`, not Flask.** The UI is five pages and four
+POST endpoints. A framework would have been a dependency carrying no weight. *Change
+point:* `src/ui/server.py` is the only file that would need rewriting.
+
+**L2. Findings are regenerated, not accumulated.** Finding IDs are deterministic
+functions of what the finding is about, so re-running the engine supersedes the previous
+result for the same structure, year and component rather than producing duplicates.
+Briefs work the other way — each generation is a **new version**, because a brief may
+already have been reviewed and rewriting it under a reviewer would destroy the trail.
+
+**L3. `corroborated` findings are emitted, not just contradictions.** They cost little,
+they let the brief say "two independent sources agree" with citations, and they are the
+control population for the validation pass. Without them the brief would only ever
+speak where there was a problem, which reads as a much more alarming document than the
+records support.
+
+**L4. A component that the engine could not evaluate is reported `single_source`,
+never as agreement.** This applies both to structures with no element data and to
+structures gated out by `MIN_TOTAL_QTY`. Silence would have been the dangerous default.
+
+**L5. Gap sentences cite the records that do exist.** A sentence saying "no NBE data is
+available for this structure" is still a claim about this structure's record, so it
+cites the NBI artifacts for that structure and year. Without an anchor it would carry
+zero artifact IDs and the grounding gate would drop it — correctly, by its own rule —
+and the brief would lose exactly the statement that matters most for missing evidence.
+
+**L6. Coordinates are parsed from the packed NBI `DDMMSSss` form** and stored as decimal
+degrees, with west longitude negated. Anything that does not parse cleanly, or lands
+outside the valid range, is stored NULL. No finding depends on a coordinate; they exist
+so the UI can eventually show where a structure is.
+
+**L7. The FHWA state-code to postal-abbreviation table is used only for labelling.** An
+unrecognised code yields NULL, not a guess. It matters because the per-state coverage
+breakdown for AL, AZ and IA depends on it; if that table were wrong, those rows would
+read zero and the NBE join would look broken when it was not.
+
+**L8. Reviewer identity, again, because it is the weakest point in the system.** Review
+actions and sign-offs record a typed name with no authentication behind it. For a
+research tool run by one operator this is adequate; for anything real it is the first
+thing that must be replaced, because the entire audit trail rests on it.
+
+**L9. Tests are permitted to fabricate sentences and citations, and do.** Testing the
+grounding gate means feeding it a sentence citing an artifact that does not exist —
+that is precisely the case that must fail closed. This is logic testing, not data
+fabrication: no file is written under `data/`, and no fabricated object ever reaches a
+brief or a metric. `tests/test_invariants.py` guards the distinction by failing if
+anything is ever committed under `data/`, if `samples/` gains an unexplained file, or
+if a mock-data generator appears in `src/`.
+
+**L10. The module boundary is enforced by a test, not by good intentions.**
+`tests/test_invariants.py` fails if the ingest layer imports from generation, or if the
+analysis layer imports from generation or the UI.
