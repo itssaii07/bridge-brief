@@ -2,7 +2,7 @@
 
 Snapshot of where this project stands: what the problem is, what has been built, and
 what still has to happen. The short version is that **all nine milestones are
-implemented, 341 tests pass, and the pipeline has now been run end to end against the
+implemented, 405 tests pass, and the pipeline has now been run end to end against the
 real published federal data.** Milestones 1–4 and 7–9 produced measured results;
 milestones 5–6 are unrun because no inspection photographs were supplied and the
 CODEBRIM archive is malformed as published (ASSUMPTIONS.md H6).
@@ -74,6 +74,44 @@ is a result the harness can and will state.
 
 ---
 
+## Conformance to the problem statement (GAI40)
+
+Every clause, checked against the running system rather than asserted. 17 of 17.
+
+| GAI40 clause | State | Verified by |
+|---|---|---|
+| evidence-linked brief | Done | every sentence carries artifact IDs; `source_link_resolution` = 1.0 |
+| image regions | Done, unrun on real data | upload → detect → region → sentence → gate → UI covered end to end by test; 0 regions on real data because **no inspection photographs exist here**, and corpus imagery is structurally barred from standing in (invariant 6) |
+| extracted observations | Done | 24,813 findings |
+| confidence levels | Done | 0 findings missing confidence or evidence tier |
+| **human sign-off queue** | Done | `/queue`, ordered by review urgency, deterministic |
+| keep original sources available | Done | 0 artifacts without a source path; `data/raw/` never written |
+| mark uncertainty clearly | Done | confidence + tier required on every finding |
+| **review before publication / sharing** | Done | `src/generate/export.py` refuses any brief not signed off; no `--force` exists and a test walks the AST to keep it that way |
+| identify missing evidence | Done | 77,187 structures recorded as lacking NBE; recall 1.0 |
+| source-link accuracy | Mechanical done, semantic needs a human | 1.0 mechanical; sampling harness ships, unlabelled |
+| **missed-defect rate** | Done | 0.9962 — named, not left as 1 − recall |
+| preserve original artefacts | Done | originals copied never re-encoded; zips read in place |
+| never autonomous clearance | Done | no such column, route or function; `src/` clean of every clearance symbol |
+| factual fidelity | Harness ships, needs a human | `factual_fidelity`, deliberately unscored by the system |
+| source fidelity | See source-link accuracy | |
+| unsupported-content rate | Done | 0.0 — see the caveat below |
+| user correction effort | Done | 0.3333 edits per finding over a real review |
+| difficult edge cases | Done | 134 edge-case tests of 405 |
+
+**Three metrics are `n/a`, and all three require a person**: contradiction
+precision, factual fidelity, and the semantic half of source-link accuracy. The
+harness exports a deterministic sample for each and reads labels back. It does not
+score itself, and an unlabelled row is excluded rather than assumed to pass.
+
+**One caveat worth stating plainly.** `unsupported_content_rate = 0.0` is 0 *by
+construction* with the default template drafter, which always cites. The counter is
+exercised by unit tests that feed the gate fabricated citations, and would go
+non-zero with the LLM drafter. Reporting it as a measured 0 without that context
+would overstate it.
+
+---
+
 ## The six invariants, and where each is enforced
 
 These are architectural, not stylistic. Each is enforced in code rather than by
@@ -92,7 +130,7 @@ convention, and `tests/test_invariants.py` guards them at the repository level.
 
 ## What is done
 
-All nine milestones, 341 tests passing. No test touches `data/`.
+All nine milestones, 405 tests passing. No test touches `data/`.
 
 | # | Scope | State | What it measured |
 |---|---|---|---|
@@ -103,8 +141,8 @@ All nine milestones, 341 tests passing. No test touches `data/`.
 | 5 | Photo upload + detector | Unrun | no inspection photographs supplied |
 | 6 | Detector benchmark | **Run** | over **dacl10k**, substituted because the CODEBRIM archive is malformed (H6): 7,910 images, 0 skipped, class-agnostic **P 0.0125 / R 0.0038 / F1 0.0058** — the honest floor for an untrained baseline |
 | 7 | Brief generation + grounding gate | **Run** | `source_link_resolution` exactly **1.0**; 0 blocked on the generated brief |
-| 8 | Review UI + sign-off trail | **Run** | serves the real index; landing page 113ms, click-to-evidence resolves to the source ZIP member |
-| 9 | Eval harness | **Run** | **13 of 15** metrics computed; the 2 remaining need a human (contradiction precision, correction effort) |
+| 8 | Review UI + sign-off queue + trail | **Run** | serves the real index; landing page 113ms, click-to-evidence resolves to the source ZIP member; `/queue` orders briefs by review urgency; publication refused until sign-off |
+| 9 | Eval harness | **Run** | **15 of 18** metrics computed; the 2 remaining need a human (contradiction precision, correction effort) |
 
 ### What running it against real data changed
 
@@ -250,7 +288,7 @@ with the single change point named for each format guess.
 
 ```bash
 python -m pip install -e ".[dev,imagery]"   # needs Python 3.10 or newer
-python -m pytest -q                      # 341 passed — none touch data/
+python -m pytest -q                      # 405 passed — none touch data/
 
 python -m src.ingest.nbi --year 2023 --year 2025
 python -m src.ingest.nbe --year 2023 --year 2025

@@ -163,7 +163,11 @@ python -m src.generate.brief --structure 013450 --year 2023 --print
 python -m src.ui.server          # http://127.0.0.1:8765
 
 # 9    the metrics table
-python -m src.eval.run_all --benchmark reports/codebrim.json
+python -m src.eval.sentence_review --export reviews/sentences.csv   # human fidelity sample
+python -m src.eval.run_all
+
+# Publishing is gated: this refuses any brief a named human has not signed off.
+python -m src.generate.export --brief BRIEF-AL012757-2023-v1 --out reports/brief.md --benchmark reports/codebrim.json
 ```
 
 Every command reports clearly and exits non-zero when its input is missing. None of
