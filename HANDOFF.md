@@ -267,17 +267,30 @@ layout differs from what I assumed. Send me one real annotation file; the fix is
 > photographs were supplied.
 >
 > The CODEBRIM diagnosis in circulation was wrong. The archive is **not encrypted** (0 of
-> 2,766 members have the encryption bit set) and its MD5 matches Zenodo exactly. Its own
-> central directory records local-header offsets up to 277 MB past the end of the file --
-> a 32-bit offset overflow in a ZIP64 archive. **Re-downloading will not help and a
-> password is not the issue.** Recover with `7z x` or `zip -FF`, not by emailing the
-> authors.
+> 2,766 members have the encryption bit set) and its MD5 matches Zenodo exactly. It is a
+> classic ZIP written past the 4 GiB limit **without** the ZIP64 records that size
+> requires, so every stored offset has wrapped modulo 2^32: the central directory is
+> recorded 4 GiB too low, and reading it from the corrected offset parses all 2,766
+> entries. **Re-downloading will not help** -- two independently downloaded copies were
+> byte-identical, and the published file is the broken one -- **and a password is not the
+> issue.** The image data is physically present, so recover with `7z x` or
+> `zip -FF`, not by emailing the authors. Neither tool is installed on this machine.
+>
+> `python -m scripts.check_dataset_archive <url-or-path>` now performs this whole check,
+> over HTTP range requests when given a URL, so a multi-GB dataset can be vetted from its
+> index before the download starts.
 >
 > All 1,057 annotations and 839 of 1,700 images are readable, which was enough to verify
 > the annotation format at last: the geometry assumption is exactly right, but `<name>`
 > is the constant `"defect"` on every box and the real classes are **multi-label** flags
 > in a sibling `<Defect>` element. The matching rule assumes one class per box, so it
 > needs reworking before a class-aware number means anything (ASSUMPTIONS.md H7).
+>
+> **On substitutes:** dacl1k, named in this runbook as a candidate, is a multi-label
+> *classification* set -- it has no bounding boxes and cannot produce a localisation
+> score. The two that do fit are **dacl10k** (9,920 images, polygons, CC BY-NC 4.0,
+> archive verified sound) and **GYU-DET** (11,123 images, YOLO boxes). See
+> ASSUMPTIONS.md H6b.
 
 ---
 

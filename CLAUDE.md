@@ -77,10 +77,12 @@ Architectural, not stylistic. Do not weaken them for convenience.
 > both sources in 2023** — that is the population the contradiction engine runs on.
 >
 > **CODEBRIM is not usable as published.** The archive's MD5 matches Zenodo and nothing
-> in it is encrypted, but its own central directory records local-header offsets up to
-> 277 MB past the end of the file — a 32-bit offset overflow in a ZIP64 archive. All
-> 1,057 annotations and 839 of 1,700 images are readable; the rest are not. Milestone 6
-> reports `n/a` with the reason rather than a number. See ASSUMPTIONS.md H6 and H7.
+> in it is encrypted: it is a classic ZIP written past the 4 GiB limit without ZIP64
+> records, so every stored offset has wrapped modulo 2³². All 1,057 annotations and 839
+> of 1,700 images still read; the rest do not. Re-downloading cannot help and no password
+> is involved — recover with `7z x` or `zip -FF`, or use one of the alternatives in
+> ASSUMPTIONS.md H6b. Milestone 6 reports `n/a` with the reason rather than a number.
+> `scripts/check_dataset_archive.py` vets an archive from its index before download.
 >
 > The rule that nothing is ever created under `data/` still stands, permanently: a
 > missing input is reported missing. Unit-test fixtures live in `tests/`, never under

@@ -402,41 +402,87 @@ that one function is the change point.
 
 **H6. CORRECTED DIAGNOSIS — CODEBRIM is damaged as published, not encrypted.**
 The handoff recorded this as an encrypted archive needing a password from the authors.
-That is wrong, and acting on it would waste the effort: measured on the file itself,
+That is wrong, and acting on it would waste the effort. Measured on the file:
 
 | check | result |
 |---|---|
 | MD5 vs the Zenodo record | `27baf3a036d0b7d757ff4df47c08c449` — **matches** |
-| size on disk | 8,310,630,622 bytes |
+| size on disk | 8,310,630,622 bytes (7.74 GiB) |
 | members with the ZIP encryption bit set | **0 of 2,766** |
-| largest local-header offset in the central directory | 8,588,194,190 — **277 MB past EOF** |
-| annotations readable | **1,057 of 1,057 (100%)** |
-| images readable | **839 of 1,700 (49.4%)** |
+| central-directory offset recorded in the EOCD | 4,015,383,077 — holds no central directory |
+| the offset that *does* hold it | 8,310,350,373 = recorded + 2³² |
+| largest stored local-header offset | 4,293,226,894 — just under 2³² |
+| annotations readable by `zipfile` | **1,057 of 1,057 (100%)** |
+| images readable by `zipfile` | **839 of 1,700 (49.4%)** |
 
-Nothing is encrypted. The central directory parses, the compression is ordinary deflate,
-and the MD5 matches, so **re-downloading would produce the same bytes** — that part of the
-handoff was right. What is wrong is the archive's own offset table: every image sits above
-the 4 GB mark, the first at 2³²+63, and readable and unreadable entries are interleaved
-within the same gigabyte (roughly 220 good to 215 bad in each). That is a 32-bit
-local-header offset overflow in a ZIP64 archive, i.e. the published file is malformed, not
-the copy. `zipfile` reports it as `BadZipFile: Bad magic number for file header` because it
-seeks to an offset that is not a local header.
+**The exact fault: a classic ZIP written past the 4 GiB limit without the ZIP64
+records that size requires.** ZIP stores offsets in 32 bits and switches to ZIP64
+beyond 4 GiB; this archive did not, so every stored offset wrapped modulo 2³². The
+central directory is recorded exactly 4 GiB too low, and once it is read from the
+corrected offset all 2,766 entries parse cleanly. `zipfile` partially compensates
+with its prepended-data correction, which is why the listing works and why about
+half the images happen to come out.
 
-*Change point if this is picked up:* the recovery path is a tool that scans for local
-headers instead of trusting the central directory — `7z x`, or `zip -FF <in> --out <out>`.
-Emailing the authors for a password is a dead end. The classification-balanced release is a
-separate archive and may be intact.
+Three consequences worth being precise about, because each contradicts the advice
+that was in circulation:
 
-**What this means for milestone 6.** It is not run, and the eval harness reports
+* **Re-downloading cannot help.** The MD5 matches what Zenodo publishes, and two
+  independently downloaded copies were byte-identical. The published file is the
+  broken one.
+* **No password is involved.** Nothing in the archive is encrypted.
+* **The image data is physically present**, merely mis-indexed. A tool that scans
+  for local headers rather than trusting the index recovers it: `7z x <archive>`,
+  or `zip -FF <archive> --out fixed.zip`. Neither 7-Zip nor Info-ZIP is installed
+  on this machine, so this was not attempted.
+
+`scripts/check_dataset_archive.py` performs this whole check, and does it over HTTP
+range requests so a multi-GB download can be vetted from its index alone before it
+is started. It reports this archive as BROKEN and names the recovery command.
+
+**What this means for milestone 6.** It is not run. The eval harness reports
 `defect_detection_precision`, `_recall` and `_f1` as `n/a` **with the reason and the
 command that would fill them** — the behaviour it was built for. `CLAUDE.md` names
-milestones 5–6 as the first thing to cut, so this was not pursued further. A partial
-benchmark over the 839 readable images is now feasible and would be a real measurement,
-but it would be over a subset selected by an archive defect, so it could not be compared
-against published CODEBRIM figures without saying so prominently.
+milestones 5–6 as the first thing to cut, so recovery was not pursued. A partial
+benchmark over the 839 currently-readable images would be a real measurement, but
+over a subset selected by an archive defect, so it could not be compared against
+published CODEBRIM figures without saying so prominently.
 
-The dataset may not be redistributed: nothing from it is committed, `data/` stays
-gitignored in full, and any writeup cites the CVPR19 paper.
+**H6b. Alternatives, researched.** The handoff proposed **dacl1k** as a substitute,
+described as "1,474 images, 2,367 bounding boxes, near-identical classes". The image
+count is right; **the bounding boxes are not**. dacl1k is a multi-label
+*classification* dataset — one label set per image, no localisation — so it cannot
+produce the precision/recall this project's milestone 6 measures, which scores
+detected regions against boxes at IoU ≥ 0.5.
+
+Two candidates that do fit, neither yet downloaded:
+
+| | **dacl10k** | **GYU-DET** |
+|---|---|---|
+| Images | 9,920 (6,935 train + 975 val labelled) | 11,123 (10,432 with ≥1 defect) |
+| Annotation | labelme-style JSON **polygons** | **YOLO bounding boxes** |
+| Classes | 19 (13 damage + 6 components) | 6 |
+| Overlap with CODEBRIM | Crack, Spalling, Efflorescence, Exposed Rebars, Rust | cracks, spalling, exposed rebar, seepage, honeycomb, holes |
+| Domain | real bridge inspections | beam bridges |
+| Size / access | 4.76 GiB, direct S3, no registration | train/valid/test zips, Science Data Bank |
+| Licence | **CC BY-NC 4.0** (non-commercial) | see the record |
+| Archive integrity | **verified sound** — 16,842 entries, every offset inside the file | not yet checked |
+
+* dacl10k: <https://github.com/phiyodr/dacl10k-toolkit>, paper arXiv:2309.00460 (WACV 2024).
+* GYU-DET: DOI [10.57760/sciencedb.19893](https://doi.org/10.57760/sciencedb.19893),
+  paper *Scientific Data* 12:1101 (2025), DOI 10.1038/s41597-025-05395-w.
+
+dacl10k needs polygons reduced to their bounding boxes (min/max over the point list)
+and GYU-DET needs YOLO normalised centre/width/height converted to pixel corners.
+Either is a few lines inside `parse_annotation_file`, which is already the documented
+change point — the matcher and the metrics do not move. **Whichever is adopted is a
+deviation from the dataset `CLAUDE.md` specifies and belongs in this file as one, with
+its licence, rather than as a silent swap.** A third option, for a benchmark that runs
+today with no parser change at all, is any Roboflow Universe concrete-defect set
+exported as Pascal-VOC XML; those are small and of unverified provenance, so they are
+a smoke test for the pipeline, not a result to publish.
+
+Whatever is used may not be redistributed: nothing from any of these is committed,
+`data/` stays gitignored in full, and a writeup citing CODEBRIM cites the CVPR19 paper.
 
 **H7. CONFIRMED with one correction — the annotation format.** H4 assumed per-image
 Pascal-VOC XML with `<object><name>…</name><bndbox>…</bndbox></object>`. All 1,057
