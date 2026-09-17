@@ -232,7 +232,7 @@ with the single change point named for each format guess.
 ## Running it
 
 ```bash
-python -m pip install -e ".[dev,imagery]"
+python -m pip install -e ".[dev,imagery]"   # needs Python 3.10 or newer
 python -m pytest -q                      # 300 passed — none touch data/
 
 python -m src.ingest.nbi --year 2023 --year 2025
