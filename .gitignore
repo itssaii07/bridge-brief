@@ -1,0 +1,20 @@
+# Data is never committed — originals are immutable and live only on disk.
+data/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+
+# Local config / secrets
+.env
+*.local
+
+# Editors / OS
+.DS_Store
+.idea/
+.vscode/
