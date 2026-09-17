@@ -16,6 +16,7 @@ import sys
 from .. import ids
 from ..analysis.findings import load_findings
 from ..db import DataUnavailable, connect, utcnow
+from ..store import StructureNotFound, resolve_structure_key
 from .drafters import SECTIONS, get_drafter
 from .grounding import GateResult, apply_gate
 
@@ -192,7 +193,9 @@ def render_text(conn, brief_id: str) -> str:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Generate an evidence-linked inspection brief.")
-    parser.add_argument("--structure", required=True)
+    parser.add_argument("--structure", required=True,
+                        help="state-qualified structure key (e.g. AL013450); a bare "
+                             "structure number is accepted when only one state uses it")
     parser.add_argument("--year", type=int, default=2023)
     parser.add_argument("--drafter", default=None, help="'template' (default) or 'llm'")
     parser.add_argument("--db", default=None)
@@ -205,12 +208,13 @@ def main(argv: list[str] | None = None) -> int:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 2
     try:
-        summary = generate(conn, args.structure, args.year, drafter_name=args.drafter)
+        structure = resolve_structure_key(conn, args.structure)
+        summary = generate(conn, structure, args.year, drafter_name=args.drafter)
         if args.print:
             print(render_text(conn, summary["brief_id"]))
         else:
             print(summary)
-    except DataUnavailable as exc:
+    except (DataUnavailable, StructureNotFound) as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 2
     finally:

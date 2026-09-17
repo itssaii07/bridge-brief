@@ -103,7 +103,7 @@ class TestRowParsing:
         )
         row = read_rows(text)[0]
         parsed = nbi.parse_row(row, nbi.resolve_headers(MODERN_HEADER))
-        assert parsed.struct_norm == "013450"
+        assert parsed.struct_norm == "AL013450"
         assert parsed.struct_raw == "000000000013450"
         assert parsed.state_code == "01"
         assert parsed.facility == "SR 12"
@@ -119,7 +119,7 @@ class TestRowParsing:
         row = read_rows(text)[0]
         parsed = nbi.parse_row(row, nbi.resolve_headers(MODERN_HEADER))
         assert parsed.feature_crossed == "MAIN ST, EAST"
-        assert parsed.struct_norm == "013450"
+        assert parsed.struct_norm == "AL013450"
 
     def test_padding_variants_join_to_the_same_structure(self):
         header = nbi.resolve_headers(LEGACY_HEADER)
@@ -127,7 +127,7 @@ class TestRowParsing:
         for spelling in ["13450", "013450", "  13450  ", "0000013450"]:
             row = read_rows(f"'{spelling}','01','7','7','7'\n")[0]
             keys.add(nbi.parse_row(row, header).struct_norm)
-        assert keys == {"013450"}
+        assert keys == {"AL013450"}
 
     def test_blank_structure_number_is_rejected_with_a_reason(self):
         row = read_rows("'','01','7','7','7'\n")[0]

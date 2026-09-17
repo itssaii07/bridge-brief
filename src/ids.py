@@ -4,12 +4,19 @@ Every addressable unit of evidence in this project gets a stable, deterministic
 identifier. Generated sentences cite these IDs and the review UI resolves them
 back to the original source artifact. See CLAUDE.md, "Artifact ID system".
 
-    NBI rating        NBI-{struct}-{year}-{component}    NBI-013450-2023-deck
-    NBE element state NBE-{struct}-{year}-{elem}-cs{n}   NBE-013450-2023-12-cs3
-    Uploaded photo    IMG-{struct}-{photo}               IMG-013450-p03
-    Photo region      IMG-{struct}-{photo}-r{n}          IMG-013450-p03-r2
+    NBI rating        NBI-{struct}-{year}-{component}    NBI-AL013450-2023-deck
+    NBE element state NBE-{struct}-{year}-{elem}-cs{n}   NBE-AL013450-2023-12-cs3
+    Uploaded photo    IMG-{struct}-{photo}               IMG-AL013450-p03
+    Photo region      IMG-{struct}-{photo}-r{n}          IMG-AL013450-p03-r2
     Reference image   REF-{corpus}-{id}                  REF-codebrim-00412
     NDE cell          NDE-{struct}-{method}-{cell}       reserved, not populated
+
+``{struct}`` is the **state-qualified** key built by :func:`structure_key` — the
+postal state abbreviation followed by the normalised structure number. CLAUDE.md
+writes the bare form (``NBI-013450-2023-deck``); the real published data forced
+the state prefix, because NBI item 8 is unique only within a state and 40,374
+structure numbers in the 2023 file are shared between states. See
+:func:`structure_key` and ASSUMPTIONS.md B5.
 
 Determinism rule: an ID is a pure function of the source coordinates of the
 thing it names. It never depends on iteration order, insertion order, wall-clock
@@ -103,6 +110,52 @@ def normalise_struct(raw: str | None) -> str:
     if stripped.isdigit() and len(stripped) < 6:
         return stripped.rjust(6, "0")
     return stripped
+
+
+def structure_key(state: str | None, raw: str | None) -> str:
+    """Build the shared, nationally-unique structure join key.
+
+    **NBI item 8 is unique only within a state, not nationally.** The real 2023
+    file proves it: 40,374 normalised structure numbers are claimed by more than
+    one state, structure ``000002`` by six of them, and 112,836 of 621,581 rows
+    share a number with another state's bridge. A key built from the structure
+    number alone therefore merges unrelated bridges — which would make the
+    contradiction engine compare one state's elements against another state's
+    ratings and report the collision as a finding.
+
+    The key is the postal state abbreviation followed by the normalised
+    structure number: ``AL`` + ``013450`` -> ``AL013450``.
+
+    Two properties this relies on:
+
+    * The abbreviation begins with a letter, so :func:`normalise_struct` is
+      idempotent on the composed key (no leading zero is stripped and no
+      zero-padding is applied). Every ID constructor can therefore accept an
+      already-composed key unchanged.
+    * The key stays within ``[A-Z0-9]``, so hyphen-delimited artifact IDs still
+      parse unambiguously.
+
+    Args:
+        state: postal abbreviation for the publishing state (``"AL"``).
+        raw: structure number exactly as published.
+
+    Raises:
+        IdError: if the state is absent or unusable, or the structure number is.
+            An unidentifiable state is an error, never a default: a key missing
+            its state prefix would silently collide with another state's bridge,
+            which is the exact failure this function exists to prevent.
+    """
+    if state is None:
+        raise IdError("state is None; cannot build a nationally-unique structure key")
+    token = _NON_ALNUM.sub("", str(state).strip().upper())
+    if not token:
+        raise IdError(f"state has no alphanumeric characters: {state!r}")
+    if not token[0].isalpha():
+        raise IdError(
+            f"state prefix must begin with a letter, got {state!r}: a numeric "
+            "prefix would break normalise_struct idempotency on the composed key"
+        )
+    return f"{token}{normalise_struct(raw)}"
 
 
 _SAFE_TOKEN = re.compile(r"[^A-Za-z0-9_]")

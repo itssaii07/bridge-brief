@@ -157,7 +157,8 @@ class TestFileLevel:
     def test_unparsed_file_fails_loudly_and_points_at_the_one_change_point(self, tmp_path):
         from src.db import connect
 
-        path = tmp_path / "AZ.xml"
+        path = tmp_path / "nbe" / "2023" / "AZ" / "elements.xml"
+        path.parent.mkdir(parents=True)
         path.write_text("<NBE><Structure STRUCNUM='1'><Element EN='12'/></Structure></NBE>", encoding="utf-8")
         conn = connect(":memory:")
         with pytest.raises(NbeFormatError) as exc:
@@ -195,7 +196,7 @@ class TestFileLevel:
         ids_second = [r[0] for r in conn.execute("SELECT artifact_id FROM elements ORDER BY 1")]
 
         assert ids_first == ids_second          # re-running changes nothing
-        assert "NBE-013450-2023-12-cs3" in ids_first
+        assert "NBE-AL013450-2023-12-cs3" in ids_first
         assert first["structures"] == 1
 
         # A second run without --force skips the unchanged file entirely.
@@ -221,7 +222,63 @@ class TestFileLevel:
         path.write_text(FIELDS_ATTRS, encoding="utf-8")
         conn = connect(":memory:")
         nbe.ingest_file(conn, path, 2023, log=lambda *a: None)
-        row = resolve_artifact(conn, "NBE-013450-2023-12-cs3")
+        row = resolve_artifact(conn, "NBE-AL013450-2023-12-cs3")
         assert row is not None
         assert "condition state 3" in row["summary"]
         assert row["source_path"].endswith("elements.xml")
+
+
+class TestStateDirectoryIsChecked:
+    """A misnamed state directory used to fail silently.
+
+    Every structure in the file would be filed under the wrong state, the
+    per-state coverage table would read zero, and the NBI join would be
+    corrupted — while every command reported success. HANDOFF.md warns about
+    exactly this, so the records' own state field is now checked against it.
+    """
+
+    #: The shape the real published files use: a flat <FHWAELEMENT> root of
+    #: repeated <FHWAED> records, each with its own STATE and STRUCNUM.
+    REAL_SHAPE = (
+        "<FHWAELEMENT><FHWAED>"
+        "<STATE>01</STATE><STRUCNUM>000042</STRUCNUM><EN>12</EN>"
+        "<TOTALQTY>130</TOTALQTY><CS1>0</CS1><CS2>0</CS2><CS3>130</CS3><CS4>0</CS4>"
+        "</FHWAED></FHWAELEMENT>"
+    )
+
+    def _write(self, tmp_path, state):
+        path = tmp_path / "nbe" / "2023" / state / "elements.xml"
+        path.parent.mkdir(parents=True)
+        path.write_text(self.REAL_SHAPE, encoding="utf-8")
+        return path
+
+    def test_the_real_published_shape_parses(self, tmp_path):
+        from src.db import connect
+
+        path = self._write(tmp_path, "AL")
+        conn = connect(":memory:")
+        result = nbe.ingest_file(conn, path, 2023, log=lambda *a: None)
+        assert result["structures"] == 1
+        keys = [r[0] for r in conn.execute("SELECT DISTINCT struct_norm FROM elements")]
+        assert keys == ["AL000042"]
+
+    def test_a_mismatched_directory_fails_loudly(self, tmp_path):
+        from src.db import connect
+
+        # The file declares state 01 (AL) but sits in the IA directory.
+        path = self._write(tmp_path, "IA")
+        conn = connect(":memory:")
+        with pytest.raises(NbeFormatError) as exc:
+            nbe.ingest_file(conn, path, 2023, log=lambda *a: None)
+        message = str(exc.value)
+        assert "IA" in message and "AL" in message
+        assert conn.execute("SELECT status FROM ingest_log").fetchone()["status"] == "failed"
+
+    def test_no_element_row_survives_a_mismatched_directory(self, tmp_path):
+        from src.db import connect
+
+        path = self._write(tmp_path, "IA")
+        conn = connect(":memory:")
+        with pytest.raises(NbeFormatError):
+            nbe.ingest_file(conn, path, 2023, log=lambda *a: None)
+        assert conn.execute("SELECT COUNT(*) FROM elements").fetchone()[0] == 0

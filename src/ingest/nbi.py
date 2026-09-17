@@ -178,6 +178,7 @@ class ParsedRow:
     struct_raw: str
     struct_norm: str
     state_code: str | None = None
+    state_abbr: str | None = None
     county_code: str | None = None
     facility: str | None = None
     feature_crossed: str | None = None
@@ -258,8 +259,18 @@ def parse_row(row: Sequence[str], mapping: dict[str, int]) -> ParsedRow:
     struct_raw = _cell(row, mapping, "struct_raw")
     if not struct_raw:
         raise RowRejected("structure number is blank")
+
+    # The join key is state-qualified: NBI item 8 is unique only within a state
+    # (ids.structure_key). Resolving the abbreviation is therefore required to
+    # build the key at all, not merely to label output, so an unrecognised state
+    # code rejects the row rather than producing a key that would collide with
+    # another state's bridge.
+    state_code = _cell(row, mapping, "state_code")
+    state_abbr = STATE_CODE_TO_ABBR.get((state_code or "").lstrip("0"))
+    if not state_abbr:
+        raise RowRejected(f"unrecognised FHWA state code: {state_code!r}")
     try:
-        struct_norm = ids.normalise_struct(struct_raw)
+        struct_norm = ids.structure_key(state_abbr, struct_raw)
     except IdError as exc:
         raise RowRejected(f"structure number unusable: {exc}") from exc
 
@@ -273,7 +284,8 @@ def parse_row(row: Sequence[str], mapping: dict[str, int]) -> ParsedRow:
     parsed = ParsedRow(
         struct_raw=struct_raw,
         struct_norm=struct_norm,
-        state_code=_cell(row, mapping, "state_code"),
+        state_code=state_code,
+        state_abbr=state_abbr,
         county_code=_cell(row, mapping, "county_code"),
         facility=_cell(row, mapping, "facility"),
         feature_crossed=_cell(row, mapping, "feature_crossed"),
@@ -370,7 +382,7 @@ def ingest_file(
                 conn, parsed.struct_norm,
                 struct_raw=parsed.struct_raw,
                 state_code=parsed.state_code,
-                state_abbr=STATE_CODE_TO_ABBR.get((parsed.state_code or "").lstrip("0")),
+                state_abbr=parsed.state_abbr,
                 county_code=parsed.county_code,
                 facility=parsed.facility,
                 feature_crossed=parsed.feature_crossed,

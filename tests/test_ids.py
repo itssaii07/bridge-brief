@@ -161,3 +161,51 @@ class TestPhotoKey:
     def test_unusable_file_name_is_reported(self):
         with pytest.raises(IdError):
             ids.photo_key_from_filename("...")
+
+
+class TestStateQualifiedStructureKey:
+    """NBI item 8 is unique only within a state, not nationally.
+
+    The real 2023 file has 40,374 structure numbers claimed by more than one
+    state. Without the state prefix those bridges merge, and the contradiction
+    engine compares one state's elements against another state's ratings.
+    """
+
+    def test_the_same_number_in_two_states_gives_two_keys(self):
+        assert ids.structure_key("AL", "000042") != ids.structure_key("AZ", "000042")
+
+    def test_key_is_the_abbreviation_plus_the_normalised_number(self):
+        assert ids.structure_key("AL", "000000000013450") == "AL013450"
+        assert ids.structure_key("ia", " 13450 ") == "IA013450"
+
+    def test_padding_variants_still_join_within_a_state(self):
+        keys = {ids.structure_key("AL", s)
+                for s in ("13450", "013450", "  13450  ", "0000013450")}
+        assert keys == {"AL013450"}
+
+    def test_normalise_struct_is_idempotent_on_a_composed_key(self):
+        """Every ID constructor runs its struct argument through normalise_struct,
+        so an already-composed key must survive it unchanged."""
+        for state, number in (("AL", "000042"), ("IA", "13450"), ("AZ", "B12")):
+            key = ids.structure_key(state, number)
+            assert ids.normalise_struct(key) == key
+
+    def test_composed_key_round_trips_through_every_id_constructor(self):
+        key = ids.structure_key("AL", "013450")
+        assert ids.parse(ids.nbi_id(key, 2023, "deck")).struct == key
+        assert ids.parse(ids.nbe_id(key, 2023, 12, 3)).struct == key
+        assert ids.parse(ids.img_id(key, "p03")).struct == key
+        assert ids.parse(ids.nde_id(key, "gpr", "c1")).struct == key
+
+    def test_an_unusable_state_is_an_error_not_a_default(self):
+        # A key missing its state prefix would silently collide with another
+        # state's bridge, which is the failure this exists to prevent.
+        for bad in (None, "", "  ", "--"):
+            with pytest.raises(IdError):
+                ids.structure_key(bad, "013450")
+
+    def test_a_numeric_state_prefix_is_refused(self):
+        # "01" + "013450" would be re-normalised to "1013450", breaking
+        # idempotency and silently changing every artifact ID.
+        with pytest.raises(IdError):
+            ids.structure_key("01", "013450")

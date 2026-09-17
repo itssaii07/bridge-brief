@@ -44,6 +44,7 @@ from ..store import (
     upsert_structure,
 )
 from .element_map import classify_element
+from .nbi import STATE_CODE_TO_ABBR
 
 #: States for which NBE element data is published and expected here.
 EXPECTED_STATES = ("AL", "AZ", "IA")
@@ -66,9 +67,18 @@ class NbeFormatError(RuntimeError):
 #: Tags whose subtree represents one structure.
 STRUCTURE_TAGS = ("structure", "bridge", "structureunit", "str")
 #: Tags whose subtree represents one element record on a structure.
-# ``nbe`` is deliberately NOT in this list: it is commonly the document root
-# tag, and matching it would count the whole document as one element record.
-ELEMENT_TAGS = ("element", "bridgeelement", "elem", "elementdata", "elementrecord")
+# ``fhwaed`` is the tag the real published files use, confirmed against all six
+# state-year extracts (AL/AZ/IA, 2023 and 2025): the documents are flat —
+# ``<FHWAELEMENT>`` root containing repeated ``<FHWAED>`` records, each carrying
+# its own STATE, STRUCNUM, EN, TOTALQTY and CS1..CS4. There is no structure-level
+# nesting and no units field.
+# ``nbe`` and ``fhwaelement`` are deliberately NOT in this list: they are document
+# root tags, and matching one would count the whole document as one element record.
+ELEMENT_TAGS = ("fhwaed", "element", "bridgeelement", "elem", "elementdata",
+                "elementrecord")
+#: Where the publishing state lives on a record. Used only to cross-check the
+#: directory name, which is the documented source (ASSUMPTIONS.md D4).
+STATE_KEYS = ("state", "statecode", "fipsstate", "stateno")
 #: Where the structure number lives.
 STRUCT_KEYS = ("strucnum", "structnum", "structurenumber", "structnumber", "brkey",
                "bridgeid", "structid", "structureid", "bid", "struct")
@@ -149,6 +159,8 @@ class ElementRecord:
 
     struct_raw: str
     elem_num: int
+    #: The record's own state field, exactly as published. Cross-check only.
+    state_raw: str | None = None
     elem_name: str | None = None
     units: str | None = None
     total_qty: float | None = None
@@ -232,6 +244,7 @@ def extract_elements(root: ET.Element) -> tuple[list[ElementRecord], Counter]:
             record = ElementRecord(
                 struct_raw=struct_raw,
                 elem_num=int(elem_number),
+                state_raw=_pick(values, STATE_KEYS) or _pick(struct_values, STATE_KEYS),
                 elem_name=_pick(values, ELEMENT_NAME_KEYS),
                 units=_pick(values, UNITS_KEYS),
                 total_qty=_number(_pick(values, TOTAL_QTY_KEYS)),
@@ -317,6 +330,14 @@ def ingest_file(
         return {"path": str(path), "skipped": True}
 
     state_abbr = state_abbr or _state_from_path(path)
+    if not state_abbr:
+        raise NbeFormatError(
+            f"{path}: cannot determine the publishing state. The documented layout is "
+            "data/raw/nbe/{year}/{STATE}/, and the two-letter directory name is where "
+            "the state is read from (ASSUMPTIONS.md D4). It is required, not cosmetic: "
+            "the structure join key is state-qualified, because NBI structure numbers "
+            "are unique only within a state."
+        )
     run = begin_file(conn, source="nbe", source_path=str(path), file_sha=file_sha,
                      year=year, state_abbr=state_abbr)
     totals: Counter = Counter()
@@ -349,9 +370,28 @@ def ingest_file(
                     "lists above it — that is the only place that needs to change."
                 )
 
+            # A misnamed state directory used to fail silently: every structure
+            # would be filed under the wrong state and the per-state coverage
+            # table would read zero while everything looked like it worked. The
+            # records declare their own state, so check it rather than trust the
+            # directory blindly.
+            declared = {
+                STATE_CODE_TO_ABBR.get(str(r.state_raw).strip().lstrip("0"))
+                for r in records if r.state_raw
+            }
+            declared.discard(None)
+            if declared and state_abbr not in declared:
+                raise NbeFormatError(
+                    f"{label}: the directory says {state_abbr} but the records declare "
+                    f"{sorted(declared)}. The directory name is the state the structures "
+                    "are filed under, so this would attach every structure in this file "
+                    "to the wrong state and silently corrupt the NBI join. Move the file "
+                    "under the correct data/raw/nbe/{year}/{STATE}/ directory."
+                )
+
             for record in records:
                 try:
-                    struct_norm = ids.normalise_struct(record.struct_raw)
+                    struct_norm = ids.structure_key(state_abbr, record.struct_raw)
                 except IdError as exc:
                     run.rows_rejected += 1
                     reject_row(conn, source="nbe", source_path=f"{path}:{label}",

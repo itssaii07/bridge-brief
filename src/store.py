@@ -24,6 +24,65 @@ from typing import Iterable
 from .db import utcnow
 
 
+class StructureNotFound(LookupError):
+    """No structure in the index matches the key the operator supplied."""
+
+
+def resolve_structure_key(conn, given: str) -> str:
+    """Resolve an operator-supplied structure argument to a stored join key.
+
+    The join key is state-qualified (``AL013450``) because NBI structure numbers
+    repeat across states — see :func:`src.ids.structure_key`. Operators reading
+    CLAUDE.md, or a structure number off a published record, will naturally type
+    the bare number, so accept it when it is unambiguous and refuse to guess
+    when it is not.
+
+    Resolution order:
+
+    1. The key as given, if it exists.
+    2. If it is unqualified, the state-qualified keys that end in it. Exactly one
+       match resolves; several raise and list them, because picking one would
+       attribute evidence to whichever bridge happened to sort first.
+
+    Raises:
+        StructureNotFound: nothing matches, or more than one does.
+    """
+    from . import ids
+
+    key = ids.normalise_struct(given)
+    row = conn.execute(
+        "SELECT struct_norm FROM structures WHERE struct_norm = ?", (key,)
+    ).fetchone()
+    if row:
+        return key
+
+    candidates = [
+        r[0] for r in conn.execute(
+            "SELECT struct_norm FROM structures WHERE struct_norm LIKE ? ORDER BY 1",
+            (f"%{key}",),
+        )
+        # Guard the LIKE: only a pure state prefix counts, so that searching for
+        # 13450 never matches 913450.
+        if r[0].endswith(key) and r[0][: -len(key)].isalpha()
+    ]
+    if len(candidates) == 1:
+        return candidates[0]
+    if candidates:
+        raise StructureNotFound(
+            f"structure number {key} is published by {len(candidates)} states: "
+            f"{', '.join(candidates)}.\n"
+            "NBI structure numbers are unique only within a state, so the key is "
+            "state-qualified. Re-run with one of the keys above."
+        )
+    raise StructureNotFound(
+        f"no structure {key} in the index.\n"
+        "The join key is state-qualified (e.g. AL013450). If the index is empty, "
+        "run the ingest first:\n"
+        "  python -m src.ingest.nbi --year 2023\n"
+        "  python -m src.ingest.nbe --year 2023"
+    )
+
+
 def sha256_file(path: Path, *, chunk: int = 1 << 20) -> str:
     """Hash a source file. Used for idempotency, never to modify the file."""
     digest = hashlib.sha256()

@@ -25,7 +25,13 @@ from pathlib import Path
 from .. import ids
 from ..db import DataUnavailable, UPLOAD_ROOT, connect, utcnow
 from ..detect.base import DetectorUnavailable, Detection, get_detector
-from ..store import register_artifact, sha256_file, upsert_structure
+from ..store import (
+    StructureNotFound,
+    register_artifact,
+    resolve_structure_key,
+    sha256_file,
+    upsert_structure,
+)
 
 #: File types accepted as inspection photographs.
 IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png", ".tif", ".tiff", ".bmp", ".webp"}
@@ -212,7 +218,9 @@ def detect_for_structure(conn, struct: str, *, detector_name: str = "baseline", 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description="Upload inspection photographs and run the defect detector.")
-    parser.add_argument("--structure", required=True, help="NBI structure number")
+    parser.add_argument("--structure", required=True,
+                        help="state-qualified structure key (e.g. AL013450); a bare "
+                             "structure number is accepted when only one state uses it")
     parser.add_argument("--dir", default=None, help="directory of photos to upload")
     parser.add_argument("--file", action="append", default=None, help="a single photo; repeatable")
     parser.add_argument("--detect", action="store_true", help="run the detector after uploading")
@@ -225,15 +233,19 @@ def main(argv: list[str] | None = None) -> int:
 
     conn = connect(args.db)
     try:
+        # Resolve once, so photos and detections land under the same key and a
+        # bare number cannot create an unqualified structure that joins to
+        # nothing.
+        structure = resolve_structure_key(conn, args.structure)
         if args.dir:
-            ingest_directory(conn, args.structure, Path(args.dir))
+            ingest_directory(conn, structure, Path(args.dir))
         for path in args.file or []:
-            ingest_upload(conn, args.structure, Path(path))
+            ingest_upload(conn, structure, Path(path))
         if args.detect:
-            summary = detect_for_structure(conn, args.structure, detector_name=args.detector)
+            summary = detect_for_structure(conn, structure, detector_name=args.detector)
             print(f"\n{summary['images']} image(s), {summary['regions']} region(s), "
                   f"detector {summary['detector']}")
-    except (DataUnavailable, DetectorUnavailable) as exc:
+    except (DataUnavailable, DetectorUnavailable, StructureNotFound) as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 2
     except ValueError as exc:
