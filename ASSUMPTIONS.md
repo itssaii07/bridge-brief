@@ -447,6 +447,68 @@ benchmark over the 839 currently-readable images would be a real measurement, bu
 over a subset selected by an archive defect, so it could not be compared against
 published CODEBRIM figures without saying so prominently.
 
+**H6c. ADOPTED — dacl10k is the corpus in use, and milestone 6 has been run.**
+Downloaded (4.76 GiB), archive pre-flighted as sound before download, licence read
+from the archive itself (`LICENSE.md`: CC BY-NC 4.0), and verified against the
+archive's own `README.md` and every one of its annotation files:
+
+| check | result |
+|---|---|
+| layout | `annotations/{train,validation}` n=6,935/975; `images/` plus unannotated `testdev` n=1,012 |
+| images registered | **7,910** (annotated splits only; `testdev` excluded) |
+| distinct labels found | **19 of 19**, every one resolving through the class map, no fallthroughs |
+| damage polygons kept | **55,581** |
+| component polygons dropped | **6,744** (the 6 object classes, matching the README exactly) |
+| shape types | `polygon` for all 62,325 |
+
+**The measured result, over 7,910 images with 0 skipped:**
+
+| scoring | TP | FP | FN | precision | recall | F1 |
+|---|---|---|---|---|---|---|
+| class-aware | 0 | 16,871 | 55,581 | 0.0000 | 0.0000 | 0.0000 |
+| class-agnostic | 211 | 16,660 | 55,370 | **0.0125** | **0.0038** | **0.0058** |
+
+Poor, and predicted to be poor by H1: the detector is a classical edge-energy
+baseline, not a trained model, and its class-aware score is zero *by construction*
+because it localises without classifying. This is the honest floor for the
+pipeline, not a claim about achievable detection performance. Swapping in a trained
+model means implementing `src/detect/base.py :: DefectDetector`; nothing else moves.
+
+**Three reasons these numbers are not comparable to a published detection score,
+all stated in the report itself:**
+
+1. **Box-from-polygon flatters the detector.** A bounding box always contains its
+   polygon, so a detection overlapping the box but missing the damage inside it
+   still scores as a hit.
+2. **dacl10k is not instance-level.** Its README merges overlapping polygons of one
+   class into a single mask for its own mIoU evaluation. As boxes they stay
+   separate, so one damaged region described by several polygons becomes several
+   annotations, and a detector covering it with one box takes the remainder as
+   false negatives. This is the main reason recall is so low against 55,581
+   annotations.
+3. **The per-class table carries no information yet.** A detector that emits no
+   class contributes no detections to any class, so every row reads TP=0, FP=0,
+   precision `n/a`, and FN equal to that class's full annotation count.
+
+**H6d. CORRECTED BY RUNNING IT — an undamaged image is a negative, not a skip.**
+The first run skipped 566 of 7,910 images as "annotation file did not parse". They
+parse fine: they annotate only component classes, i.e. they are images of a bridge
+with no damage on it. The guard inherited from the CODEBRIM design assumed any
+annotation file with no boxes meant a format mismatch, which is true of a detection
+corpus and false of this one.
+
+Raising for them discarded 7% of the corpus and, worse, discarded every false
+positive the detector produced on exactly the images where any detection *must* be
+wrong. `parse_annotation_file` now treats an empty box list as a real ground truth
+and raises only when the structure is unrecognisable (no `shapes` key at all). The
+format-mismatch guard moved up to `run()`, which fails loudly if the corpus as a
+whole yields no annotations — so a layout mismatch can never read as "the detector
+missed nothing", which was the original guard's purpose and is better served there.
+
+Precision moved **0.0135 → 0.0125** as a result: 1,291 previously hidden detections
+now count against it. A correctness fix moving a headline number the unflattering
+way is the expected direction.
+
 **H6b. Alternatives, researched.** The handoff proposed **dacl1k** as a substitute,
 described as "1,474 images, 2,367 bounding boxes, near-identical classes". The image
 count is right; **the bounding boxes are not**. dacl1k is a multi-label
@@ -454,7 +516,8 @@ count is right; **the bounding boxes are not**. dacl1k is a multi-label
 produce the precision/recall this project's milestone 6 measures, which scores
 detected regions against boxes at IoU ≥ 0.5.
 
-Two candidates that do fit, neither yet downloaded:
+Two candidates that do fit. **dacl10k was adopted and run — see H6c.** GYU-DET
+remains the alternative if a true bounding-box corpus is wanted:
 
 | | **dacl10k** | **GYU-DET** |
 |---|---|---|
@@ -466,6 +529,7 @@ Two candidates that do fit, neither yet downloaded:
 | Size / access | 4.76 GiB, direct S3, no registration | train/valid/test zips, Science Data Bank |
 | Licence | **CC BY-NC 4.0** (non-commercial) | see the record |
 | Archive integrity | **verified sound** — 16,842 entries, every offset inside the file | not yet checked |
+| Status | **in use** (H6c) | not downloaded |
 
 * dacl10k: <https://github.com/phiyodr/dacl10k-toolkit>, paper arXiv:2309.00460 (WACV 2024).
 * GYU-DET: DOI [10.57760/sciencedb.19893](https://doi.org/10.57760/sciencedb.19893),

@@ -101,10 +101,10 @@ All nine milestones, 341 tests passing. No test touches `data/`.
 | 3 | **Contradiction engine** | **Run** | 7,018 contradictions over 10,661 structures (43.6% of structures), plus 16,247 corroborated and 1,548 single-source findings |
 | 4 | **2025 validation pass** | **Run** | optimistic flags **2.14x**, pessimistic **3.46x**, both p < 1e-12; pooled lift +2.5% |
 | 5 | Photo upload + detector | Unrun | no inspection photographs supplied |
-| 6 | CODEBRIM benchmark | Unrun | archive malformed as published (H6); harness reports `n/a` with the reason |
+| 6 | Detector benchmark | **Run** | over **dacl10k**, substituted because the CODEBRIM archive is malformed (H6): 7,910 images, 0 skipped, class-agnostic **P 0.0125 / R 0.0038 / F1 0.0058** — the honest floor for an untrained baseline |
 | 7 | Brief generation + grounding gate | **Run** | `source_link_resolution` exactly **1.0**; 0 blocked on the generated brief |
 | 8 | Review UI + sign-off trail | **Run** | serves the real index; landing page 113ms, click-to-evidence resolves to the source ZIP member |
-| 9 | Eval harness | **Run** | 10 of 15 metrics computed; the other 5 each name the reason and the command |
+| 9 | Eval harness | **Run** | **13 of 15** metrics computed; the 2 remaining need a human (contradiction precision, correction effort) |
 
 ### What running it against real data changed
 

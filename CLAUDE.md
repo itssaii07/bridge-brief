@@ -94,7 +94,8 @@ Architectural, not stylistic. Do not weaken them for convenience.
 |---|---|---|---|
 | NBI 2023, 2025 | All states, 621,581 / 624,193 records | Structure inventory + official 0–9 condition ratings | ingested, 0 rejected |
 | NBE 2023, 2025 | Alabama, Arizona, Iowa | Element-level condition state quantities (CS1–CS4) | ingested, 0 rejected |
-| CODEBRIM original images | 1,590 annotated images | Detector benchmark only — never demo evidence for a named bridge | **unavailable — encrypted archive** |
+| ~~CODEBRIM original images~~ | 1,590 annotated images | Detector benchmark only — never demo evidence for a named bridge | **unusable — malformed archive (H6)** |
+| **dacl10k** *(substitute)* | 7,910 annotated bridge-inspection images | Detector benchmark only — never demo evidence for a named bridge | ingested, benchmark run (H6c) |
 
 ### Never read raw data into context
 

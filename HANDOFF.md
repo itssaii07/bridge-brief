@@ -6,7 +6,7 @@
 > The notes marked **[RAN]** record what actually happened at each step, so this file
 > stays useful as a rebuild guide rather than becoming a historical document.
 >
-> Expect **341 passed**, not the 286 written below.
+> Expect **378 passed**, not the 286 written below.
 >
 > If you are rebuilding from scratch, follow it as written — ingest is idempotent and
 > artifact IDs are deterministic, so a rebuilt index is equivalent in every ID a brief
@@ -27,7 +27,7 @@ python -m pip install -e ".[dev,imagery]"
 python -m pytest -q
 ```
 
-**Expect:** `341 passed`. These tests touch no data and must pass before you start.
+**Expect:** `378 passed`. These tests touch no data and must pass before you start.
 If they do not, stop and send me the pytest output — the pipeline is not worth running
 against a broken build.
 
@@ -286,11 +286,26 @@ layout differs from what I assumed. Send me one real annotation file; the fix is
 > in a sibling `<Defect>` element. The matching rule assumes one class per box, so it
 > needs reworking before a class-aware number means anything (ASSUMPTIONS.md H7).
 >
-> **On substitutes:** dacl1k, named in this runbook as a candidate, is a multi-label
-> *classification* set -- it has no bounding boxes and cannot produce a localisation
-> score. The two that do fit are **dacl10k** (9,920 images, polygons, CC BY-NC 4.0,
-> archive verified sound) and **GYU-DET** (11,123 images, YOLO boxes). See
-> ASSUMPTIONS.md H6b.
+> **Substitute adopted: dacl10k, and milestone 6 has been run.** dacl1k, named in
+> this runbook as a candidate, is a multi-label *classification* set -- no bounding
+> boxes, so it cannot produce a localisation score at all. dacl10k was used instead
+> (9,920 images, labelme polygons, CC BY-NC 4.0, archive pre-flighted as sound
+> before download). Run it with:
+>
+> ```
+> python -m src.ingest.dacl10k
+> python -m src.eval.codebrim_benchmark --corpus dacl10k --json reports/detector_dacl10k.json
+> ```
+>
+> Measured over 7,910 images, 0 skipped: class-agnostic precision **0.0125**, recall
+> **0.0038**, F1 **0.0058**; class-aware all zero by construction. Poor exactly as
+> this step predicted -- the detector is an untrained edge-energy baseline.
+>
+> One design error surfaced by running it: 566 images annotate only *component*
+> classes, meaning no damage is present. Those were being skipped as unparseable,
+> which threw away 7% of the corpus and every false positive on the images where any
+> detection must be wrong. They are now scored as real negatives, and the
+> format-mismatch guard moved to the corpus level. See ASSUMPTIONS.md H6c and H6d.
 
 ---
 
