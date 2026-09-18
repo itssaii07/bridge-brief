@@ -16,7 +16,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 #: Current schema version. Bump together with a new migration file.
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 DATA_ROOT = Path(os.environ.get("BRIDGE_BRIEF_DATA", REPO_ROOT / "data"))

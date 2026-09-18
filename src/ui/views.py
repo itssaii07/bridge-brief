@@ -23,76 +23,7 @@ from __future__ import annotations
 import html
 import json
 
-CSS = """
-:root {
-  --bg: #12151a; --panel: #1b1f27; --line: #2c323d; --text: #e6e9ef;
-  --muted: #98a2b3; --accent: #5aa9e6; --warn: #e8a33d; --bad: #e05c5c;
-  --ok: #55b98a;
-}
-* { box-sizing: border-box; }
-body { margin: 0; background: var(--bg); color: var(--text);
-       font: 15px/1.6 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; }
-a { color: var(--accent); text-decoration: none; }
-a:hover { text-decoration: underline; }
-header { padding: 18px 28px; border-bottom: 1px solid var(--line); display: flex;
-         gap: 18px; align-items: baseline; flex-wrap: wrap; }
-header h1 { font-size: 18px; margin: 0; letter-spacing: .3px; }
-header .sub { color: var(--muted); font-size: 13px; }
-main { padding: 24px 28px; max-width: 1400px; }
-.layout { display: grid; grid-template-columns: minmax(0,1fr) 400px; gap: 24px; align-items: start; }
-@media (max-width: 1000px) { .layout { grid-template-columns: 1fr; } }
-.panel { background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
-         padding: 18px 20px; margin-bottom: 18px; }
-.panel h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .8px;
-            color: var(--muted); margin: 0 0 14px; }
-table { width: 100%; border-collapse: collapse; font-size: 14px; }
-th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--line); }
-th { color: var(--muted); font-weight: 600; font-size: 12px; text-transform: uppercase; }
-.counters { display: flex; gap: 14px; flex-wrap: wrap; }
-.counter { background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
-           padding: 12px 16px; min-width: 150px; }
-.counter .n { font-size: 26px; font-weight: 600; }
-.counter .k { color: var(--muted); font-size: 12px; text-transform: uppercase;
-              letter-spacing: .6px; }
-.counter.blocked .n { color: var(--warn); }
-.tag { display: inline-block; font-size: 11px; padding: 2px 8px; border-radius: 999px;
-       border: 1px solid var(--line); color: var(--muted); text-transform: uppercase;
-       letter-spacing: .5px; white-space: nowrap; }
-.tag.conflicting { color: var(--bad); border-color: var(--bad); }
-.tag.single_source { color: var(--warn); border-color: var(--warn); }
-.tag.corroborated { color: var(--ok); border-color: var(--ok); }
-.tag.inspection_upload { color: var(--accent); border-color: var(--accent); }
-.tag.reference_corpus { color: var(--warn); border-color: var(--warn); }
-.sentence { border-left: 3px solid transparent; padding: 10px 14px; margin: 6px 0;
-            border-radius: 0 8px 8px 0; cursor: pointer; }
-.sentence:hover { background: #222732; }
-.sentence.active { background: #222b38; border-left-color: var(--accent); }
-.sentence .meta { display: flex; gap: 10px; align-items: center; margin-bottom: 4px; }
-.cite { color: var(--accent); font-family: ui-monospace, monospace; font-size: 12px; }
-.artifact { border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px;
-            margin-bottom: 8px; font-size: 13px; }
-.artifact.highlight { border-color: var(--accent); background: #1d2632; }
-.artifact .id { font-family: ui-monospace, monospace; color: var(--accent); font-size: 12px; }
-.artifact .src { color: var(--muted); font-size: 12px; word-break: break-all; }
-.section-title { font-size: 12px; text-transform: uppercase; letter-spacing: .8px;
-                 color: var(--muted); margin: 18px 0 6px; }
-.empty { color: var(--muted); padding: 30px 0; line-height: 1.8; }
-.empty code { background: #0d1014; padding: 2px 6px; border-radius: 4px; color: var(--text); }
-form.inline { display: inline; }
-button, input[type=text], textarea, select {
-  font: inherit; background: #0f1319; color: var(--text);
-  border: 1px solid var(--line); border-radius: 6px; padding: 6px 10px; }
-button { cursor: pointer; }
-button:hover { border-color: var(--accent); }
-button.primary { background: #1d3550; border-color: var(--accent); }
-.notice { border: 1px solid var(--warn); border-radius: 8px; padding: 12px 16px;
-          color: var(--warn); font-size: 13px; margin-bottom: 18px; }
-.blocked-item { border-left: 3px solid var(--warn); padding: 8px 12px; margin: 6px 0;
-                color: var(--muted); font-size: 13px; }
-.trail { font-size: 13px; }
-.trail li { margin-bottom: 6px; color: var(--muted); }
-.trail b { color: var(--text); }
-"""
+from .icons import icon
 
 SCRIPT = """
 document.addEventListener('click', function (event) {
@@ -118,22 +49,12 @@ document.addEventListener('click', function (event) {
 E = html.escape
 
 
-def page(title: str, body: str, *, subtitle: str = "") -> str:
-    return f"""<!doctype html>
-<html lang="en"><head>
-<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>{E(title)}</title><style>{CSS}</style></head>
-<body>
-<header>
-  <h1><a href="/">Inspection Brief Review</a></h1>
-  <span class="sub"><a href="/">structures</a> &middot; <a href="/queue">sign-off queue</a></span>
-  <span class="sub">{E(subtitle)}</span>
-  <span class="sub" style="margin-left:auto">Drafts only &mdash; no automated safety
-  clearance or maintenance authorisation</span>
-</header>
-<main>{body}</main>
-<script>{SCRIPT}</script>
-</body></html>"""
+def page(title: str, body: str, *, subtitle: str = "", pending: int = 0) -> str:
+    from .webapp import shell
+
+    head = f'<p class="eyebrow" style="margin-top:28px">{E(subtitle)}</p>' if subtitle else ""
+    return shell(title, f'<div class="legacy">{head}{body}<script>{SCRIPT}</script></div>',
+                 page="records", pending=pending)
 
 
 def empty_state(message: str, commands: list[str]) -> str:
@@ -161,8 +82,8 @@ def structure_list(rows: list[dict], totals: dict, *, pending: int = 0) -> str:
     # The queue is a named deliverable, so it gets a counter here rather than
     # only a nav link: a reviewer should see work waiting without looking for it.
     queue_note = (
-        f'<div class="notice"><b>{pending:,}</b> brief(s) awaiting human sign-off '
-        '&mdash; <a href="/queue">open the sign-off queue</a>. No brief can be '
+        f'<div class="notice"><b>{pending:,}</b> brief(s) awaiting human sign-off. '
+        '<a href="/queue">Open the sign-off queue</a>. No brief can be '
         'exported before a named human signs it off.</div>' if pending else "")
     body = [f'<div class="counters">{counters}</div>', queue_note,
             '<div class="panel" style="margin-top:18px"><h2>Structures</h2><table>',
@@ -175,8 +96,8 @@ def structure_list(rows: list[dict], totals: dict, *, pending: int = 0) -> str:
             f'<td>{row["contradictions"]:,}</td><td>{row["single_source"]:,}</td>'
             f'<td>{row["photos"]:,}</td><td>{row["briefs"]:,}</td></tr>')
     body.append("</table></div>")
-    return page("Inspection Brief Review", "".join(body),
-                subtitle=f"{len(rows):,} structure(s) with findings")
+    return page("Records", "".join(body),
+                subtitle=f"{len(rows):,} structure(s) with findings", pending=pending)
 
 
 def structure_view(struct: dict, findings: list[dict], briefs: list[dict],
@@ -313,7 +234,7 @@ def brief_view(brief: dict, sentences: list[dict], artifacts: list[dict],
             f'<span class="id">{E(artifact["artifact_id"])}</span>'
             f'<div>{E(artifact.get("summary") or "")}</div>'
             f'<div class="src">{E(artifact.get("source_path") or "")}'
-            + (f' &mdash; {E(artifact["source_locator"])}' if artifact.get("source_locator") else "")
+            + (f' [{E(artifact["source_locator"])}]' if artifact.get("source_locator") else "")
             + "</div></div>")
     right.append("</div>")
 
@@ -375,12 +296,12 @@ def _trail_panel(rows: list[dict]) -> str:
             when = row.get("acted_at") or row.get("signed_at") or ""
             if row["type"] == "signoff":
                 out.append(f'<li><b>{E(row["decision"])}</b> of version {row["version"]} by '
-                           f'<b>{E(row["reviewer"])}</b> &mdash; {E(when)}'
+                           f'<b>{E(row["reviewer"])}</b>, {E(when)}'
                            + (f'<br>{E(row["note"])}' if row.get("note") else "") + "</li>")
             else:
                 target = row.get("sentence_id") or row.get("finding_id") or ""
                 out.append(f'<li><b>{E(row["action"])}</b> by <b>{E(row["reviewer"])}</b> '
-                           f'on {E(target)} &mdash; {E(when)}</li>')
+                           f'on {E(target)}, {E(when)}</li>')
         out.append("</ul>")
     out.append("</div>")
     return "".join(out)
@@ -420,7 +341,7 @@ def signoff_queue_view(rows: list[dict], totals: dict, *, include_decided: bool)
             '<div class="empty" style="padding:0 0 12px">Ordered by urgency: briefs '
             'already in review first, then by highest finding severity, then by how '
             'many sentences the grounding gate had to drop. The order is '
-            'deterministic — your place in the queue will not move between page '
+            'deterministic, so your place in the queue will not move between page '
             f'loads. <a href="{toggle}">{E(toggle_label)}</a></div>',
             "<table>",
             "<tr><th>brief</th><th>structure</th><th>status</th>"

@@ -71,20 +71,20 @@ convention:
 
 ## Setup
 
-Python 3.10 or newer. The core runtime is **the standard library only** — no web
-framework, no database server, no network access required.
+Python 3.10 or newer. The core runtime is **the standard library only**: no web
+framework, no database server, no build step, no CDN.
 
 ```bash
 git clone <this repo>
 cd bridge-brief
 python -m pip install -e ".[dev]"        # pytest, for the test suite
-python -m pip install -e ".[imagery]"    # optional: Pillow, for photos and the benchmark
-python -m pip install -e ".[llm]"        # optional: the anthropic SDK
-python -m pytest -q                      # 286 tests, none of which touch data/
+python -m pip install -e ".[imagery]"    # Pillow: photographs, detection, the benchmark
+python -m pip install -e ".[llm]"        # anthropic SDK: Claude vision and the LLM drafter
+python -m pytest -q                      # 474 tests, none of which touch data/
 ```
 
-Without Pillow, the imagery paths report that it is missing and everything else still
-runs. Without an API key, brief generation uses the deterministic template drafter.
+On a machine with more than one Python, always use `python -m pip` so packages land in
+the interpreter that runs the project.
 
 ### Configuration
 
@@ -93,18 +93,20 @@ committed.**
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `ANTHROPIC_API_KEY` | *(unset)* | Required **only** for the optional LLM drafter |
+| `ANTHROPIC_API_KEY` | *(unset)* | Enables **Claude vision** on uploaded photographs, and the optional LLM drafter |
+| `BRIDGE_BRIEF_VISION_MODEL` | `claude-opus-5` | Model that reads photographs |
 | `BRIDGE_BRIEF_DRAFTER` | `template` | `template` (deterministic, default) or `llm` |
 | `BRIDGE_BRIEF_MODEL` | `claude-sonnet-5` | Model id for the LLM drafter |
 | `BRIDGE_BRIEF_DATA` | `./data` | Root of the data tree |
 
 ```bash
 export ANTHROPIC_API_KEY="sk-ant-..."   # never commit this; .env is gitignored
-export BRIDGE_BRIEF_DRAFTER=llm
 ```
 
-The grounding gate is deterministic code and is applied identically to both drafters.
-The LLM is never trusted to cite correctly; it is checked.
+Without a key everything still runs: photographs are read by the classical baseline
+detector instead, and the app says so on every page where it matters. The grounding
+gate is deterministic code applied identically either way. No model is trusted to cite
+correctly; every citation is checked.
 
 ---
 
@@ -141,6 +143,39 @@ data/                        # gitignored in full
 
 ## Running it
 
+### The web app
+
+```bash
+python -m src.ui.server          # then open http://127.0.0.1:8765
+```
+
+| Page | What it is for |
+|---|---|
+| **Overview** `/` | Every GAI40 deliverable with the live figure behind it |
+| **New inspection** `/inspect` | Pick a structure, drop in photographs, generate a draft brief |
+| **Report** `/report/<brief>` | Photographs with region overlays; each sentence traced to its source; approve, edit or reject; sign off; publish |
+| **Sign-off queue** `/queue` | Briefs awaiting a named reviewer, ordered by urgency |
+| **Evaluation** `/metrics` | The full metrics table, with the reason beside every `n/a` |
+| **Records** `/structures` | The federal record explorer |
+
+**What to upload.** Photographs (JPEG, PNG, WebP, TIFF or BMP; up to 40 MB each, 24 per
+inspection) **of the structure you select**. A photograph is only ever attached to a
+bridge that exists in the federal inventory, and it is labelled `inspection_upload`, so
+a photo of a different bridge would be mislabelled evidence. Search by structure number
+(`AL012757`), road (`US 80`) or feature crossed (`Cahaba River`). Structures in Alabama,
+Arizona and Iowa also carry element data, so their federal records are cross-checked
+for contradictions; elsewhere the brief rests on the inventory rating and the photos.
+
+Each upload is stored byte-for-byte under a name derived from its SHA-256, so the
+original is always available from the report and no two photographs can overwrite each
+other. Nothing is published until a named reviewer signs the brief off; once signed or
+rejected it is frozen.
+
+The server binds to 127.0.0.1 and has no authentication. Reviewer names are typed, not
+verified. Do not expose it.
+
+### The pipeline from the command line
+
 Full order, with what each step prints, is in **[HANDOFF.md](HANDOFF.md)**. In brief:
 
 ```bash
@@ -151,23 +186,23 @@ python -m src.catalog --record-missing
 
 # 3-4  the core analysis
 python -m src.analysis.contradictions --year 2023
-python -m src.analysis.validate
+python -m src.analysis.validate --json reports/validation.json
 
-# 5-6  imagery (optional; needs Pillow)
-python -m src.ingest.uploads --structure 013450 --dir ~/photos --detect
-python -m src.ingest.codebrim
-python -m src.eval.codebrim_benchmark --json reports/codebrim.json
+# 5-6  imagery (needs Pillow)
+python -m src.ingest.uploads --structure AL012757 --dir ~/photos --detect
+python -m src.ingest.dacl10k
+python -m src.eval.codebrim_benchmark --corpus dacl10k --json reports/detector_dacl10k.json
 
 # 7-8  brief and review
-python -m src.generate.brief --structure 013450 --year 2023 --print
-python -m src.ui.server          # http://127.0.0.1:8765
+python -m src.generate.brief --structure AL012757 --year 2023 --print
+python -m src.ui.server
 
 # 9    the metrics table
 python -m src.eval.sentence_review --export reviews/sentences.csv   # human fidelity sample
-python -m src.eval.run_all
+python -m src.eval.run_all --benchmark reports/detector_dacl10k.json --json reports/metrics.json
 
 # Publishing is gated: this refuses any brief a named human has not signed off.
-python -m src.generate.export --brief BRIEF-AL012757-2023-v1 --out reports/brief.md --benchmark reports/codebrim.json
+python -m src.generate.export --brief BRIEF-AL012757-2023-v1 --out reports/brief.md
 ```
 
 Every command reports clearly and exits non-zero when its input is missing. None of

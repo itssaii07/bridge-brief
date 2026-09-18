@@ -148,7 +148,7 @@ def render_markdown(payload: dict, signoff: dict) -> str:
     rate = (blocked / total) if total else 0.0
 
     out = [
-        f"# Inspection brief — structure {brief['struct_norm']}, {brief['year']}",
+        f"# Inspection brief: structure {brief['struct_norm']}, {brief['year']}",
         "",
         f"> {DISCLAIMER}",
         "",

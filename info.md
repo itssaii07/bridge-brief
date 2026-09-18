@@ -2,7 +2,7 @@
 
 Snapshot of where this project stands: what the problem is, what has been built, and
 what still has to happen. The short version is that **all nine milestones are
-implemented, 405 tests pass, and the pipeline has now been run end to end against the
+implemented, 474 tests pass, and the pipeline has now been run end to end against the
 real published federal data.** Milestones 1–4 and 7–9 produced measured results;
 milestones 5–6 are unrun because no inspection photographs were supplied and the
 CODEBRIM archive is malformed as published (ASSUMPTIONS.md H6).
@@ -81,7 +81,7 @@ Every clause, checked against the running system rather than asserted. 17 of 17.
 | GAI40 clause | State | Verified by |
 |---|---|---|
 | evidence-linked brief | Done | every sentence carries artifact IDs; `source_link_resolution` = 1.0 |
-| image regions | Done, unrun on real data | upload → detect → region → sentence → gate → UI covered end to end by test; 0 regions on real data because **no inspection photographs exist here**, and corpus imagery is structurally barred from standing in (invariant 6) |
+| image regions | Done, awaiting real photographs | upload a photo on `/inspect` and each region is drawn over the original on the report page; Claude vision boxes and describes defects when `ANTHROPIC_API_KEY` is set, the classical baseline otherwise. 0 regions in the real index because no inspection photographs have been supplied yet |
 | extracted observations | Done | 24,813 findings |
 | confidence levels | Done | 0 findings missing confidence or evidence tier |
 | **human sign-off queue** | Done | `/queue`, ordered by review urgency, deterministic |
@@ -112,6 +112,18 @@ would overstate it.
 
 ---
 
+## The web application
+
+`python -m src.ui.server`, then http://127.0.0.1:8765. Upload photographs of a
+structure, get a draft brief with image regions, extracted observations and confidence
+levels, review and sign it off, then publish. Pages: Overview, New inspection, Report,
+Sign-off queue, Evaluation, Records. Glass and 3D presentation (pointer-tracked tilt,
+a live wireframe truss, a perspective floor), all native CSS and canvas with no build
+step and no CDN, and everything collapses to static under reduced motion. See
+README.md "The web app" and ASSUMPTIONS.md section M.
+
+---
+
 ## The six invariants, and where each is enforced
 
 These are architectural, not stylistic. Each is enforced in code rather than by
@@ -130,7 +142,7 @@ convention, and `tests/test_invariants.py` guards them at the repository level.
 
 ## What is done
 
-All nine milestones, 405 tests passing. No test touches `data/`.
+All nine milestones, 474 tests passing. No test touches `data/`.
 
 | # | Scope | State | What it measured |
 |---|---|---|---|
@@ -288,7 +300,7 @@ with the single change point named for each format guess.
 
 ```bash
 python -m pip install -e ".[dev,imagery]"   # needs Python 3.10 or newer
-python -m pytest -q                      # 405 passed — none touch data/
+python -m pytest -q                      # 474 passed — none touch data/
 
 python -m src.ingest.nbi --year 2023 --year 2025
 python -m src.ingest.nbe --year 2023 --year 2025

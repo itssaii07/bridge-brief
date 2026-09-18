@@ -134,6 +134,10 @@ CREATE TABLE IF NOT EXISTS image_regions (
     source          TEXT NOT NULL CHECK (source IN ('detector','annotation')),
     detector_name   TEXT,
     detector_version TEXT,
+    -- What the proposer says it saw, in words. Only a vision model writes one;
+    -- the classical baseline localises without describing. NULL means "no
+    -- description was produced", never "nothing to describe". (schema v2)
+    description     TEXT,
     FOREIGN KEY (image_artifact) REFERENCES images(artifact_id)
 );
 CREATE INDEX IF NOT EXISTS idx_regions_image ON image_regions(image_artifact);

@@ -52,6 +52,9 @@ class Detection:
     h: int
     defect_class: str
     confidence: float
+    #: What the proposer says it saw. Only a describing proposer (the vision
+    #: model) fills this in; geometry-only detectors leave it None.
+    description: str | None = None
 
     @property
     def box(self) -> tuple[int, int, int, int]:
@@ -116,6 +119,7 @@ def get_detector(name: str = "baseline", **kwargs) -> DefectDetector:
         DetectorUnavailable: if the name is unknown, listing what is registered.
     """
     from . import baseline  # noqa: F401  (registers the built-in on import)
+    from . import vision  # noqa: F401  (registers the Claude vision proposer)
 
     if name not in _REGISTRY:
         raise DetectorUnavailable(

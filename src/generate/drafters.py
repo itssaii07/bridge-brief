@@ -185,13 +185,23 @@ class TemplateDrafter:
                 citations=[i["artifact_id"] for i in uploads],
             ))
         for region in regions:
+            # Who proposed it matters to the reader: a vision model describes what
+            # it saw, the classical baseline only locates texture. Either way it is
+            # one automated source, so the tier is single_source, never more.
+            proposer = ("a vision model" if (region.get("detector_name") or "")
+                        .startswith("claude") else "the baseline detector")
+            label = ("defect" if region["defect_class"] in (None, "defect")
+                     else region["defect_class"].replace("_", " "))
+            described = (f" The model describes it as: {region['description'].rstrip('.')}."
+                         if region.get("description") else "")
             out.append(CandidateSentence(
                 section=SECTION_IMAGERY,
-                text=(f"A candidate {region['defect_class']} region was detected in "
+                text=(f"A candidate {label} region was proposed by {proposer} in "
                       f"{region['image_artifact']} at ({region['x']}, {region['y']}), "
-                      f"{region['w']}x{region['h']} pixels, with detector confidence "
-                      f"{region['confidence']:.2f}. This is an automated proposal on an "
-                      "inspection photograph and has not been confirmed."),
+                      f"{region['w']}x{region['h']} pixels, with confidence "
+                      f"{region['confidence']:.2f}.{described} This is an automated "
+                      "proposal on an inspection photograph and has not been confirmed "
+                      "by an inspector."),
                 citations=[region["artifact_id"], region["image_artifact"]],
                 confidence=region["confidence"], evidence_tier="single_source",
             ))
@@ -212,6 +222,18 @@ class TemplateDrafter:
                 text=(f"No {gap['source'].upper()} data is available for this structure in "
                       f"{gap['year']}: {gap['reason']}."),
                 citations=anchors[:3],
+            ))
+        anchors_for_streams = context.get("anchor_artifacts") or []
+        if anchors_for_streams:
+            # Inspectors combine images, notes and sensor readings. This brief can
+            # only speak to what was supplied, so the absent streams are named
+            # rather than left for a reader to assume they were checked.
+            out.append(CandidateSentence(
+                section=SECTION_GAPS,
+                text=("No sensor readings (non-destructive evaluation such as ground-"
+                      "penetrating radar or resistivity) and no field notes were supplied "
+                      "for this structure, so neither contributes to this brief."),
+                citations=anchors_for_streams[:3],
             ))
         if not uploads:
             anchors = context.get("anchor_artifacts") or []

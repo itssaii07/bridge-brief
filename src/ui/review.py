@@ -41,6 +41,13 @@ def record_action(conn: sqlite3.Connection, *, brief_id: str, action: str, revie
     brief = conn.execute("SELECT * FROM briefs WHERE brief_id = ?", (brief_id,)).fetchone()
     if brief is None:
         raise ReviewError(f"no brief with id {brief_id}")
+    if brief["status"] in ("signed_off", "rejected"):
+        # A decided brief is frozen. Editing a signed-off brief would change the
+        # text after a named reviewer approved it, and the publication gate would
+        # then release words nobody signed. Regenerate to get a new version.
+        raise ReviewError(
+            f"{brief_id} has already been {brief['status'].replace('_', ' ')} and is "
+            "frozen; generate a new version of the brief to review it again")
 
     text_before = None
     if sentence_id:

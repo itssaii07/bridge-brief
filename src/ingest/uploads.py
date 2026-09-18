@@ -50,7 +50,19 @@ def _image_size(path: Path) -> tuple[int | None, int | None]:
         return None, None
     try:
         with Image.open(path) as image:
-            return image.size
+            width, height = image.size
+            # Report the size as displayed. A camera that stored the photo
+            # sideways with an EXIF orientation flag (5-8 are the 90 degree
+            # rotations) is shown upright by browsers, and both detectors read it
+            # upright, so region coordinates live in the upright frame. The stored
+            # dimensions must too, or every box would be drawn in the wrong place.
+            try:
+                orientation = image.getexif().get(0x0112)
+            except Exception:
+                orientation = None
+            if orientation in (5, 6, 7, 8):
+                width, height = height, width
+            return width, height
     except OSError:
         return None, None
 
@@ -151,17 +163,19 @@ def store_detections(conn, image_artifact: str, detections: list[Detection],
             """
             INSERT INTO image_regions
                 (artifact_id, image_artifact, region_index, x, y, w, h,
-                 defect_class, confidence, source, detector_name, detector_version)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 defect_class, confidence, source, detector_name, detector_version,
+                 description)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(artifact_id) DO UPDATE SET
                 x = excluded.x, y = excluded.y, w = excluded.w, h = excluded.h,
                 defect_class = excluded.defect_class, confidence = excluded.confidence,
                 detector_name = excluded.detector_name,
-                detector_version = excluded.detector_version
+                detector_version = excluded.detector_version,
+                description = excluded.description
             """,
             (region_id, image_artifact, index, detection.x, detection.y,
              detection.w, detection.h, detection.defect_class, detection.confidence,
-             source, detector_name, detector_version),
+             source, detector_name, detector_version, detection.description),
         )
         parent = conn.execute(
             "SELECT struct_norm, stored_path FROM images WHERE artifact_id = ?",
@@ -172,8 +186,9 @@ def store_detections(conn, image_artifact: str, detections: list[Detection],
             struct_norm=parent["struct_norm"] if parent else None,
             summary=(f"{detection.defect_class} candidate region in "
                      f"{image_artifact} at ({detection.x}, {detection.y}) "
-                     f"{detection.w}x{detection.h}px, detector confidence "
-                     f"{detection.confidence:.2f}"),
+                     f"{detection.w}x{detection.h}px, {detector_name} confidence "
+                     f"{detection.confidence:.2f}"
+                     + (f": {detection.description}" if detection.description else "")),
             source_path=parent["stored_path"] if parent else None,
             source_locator=f"x={detection.x} y={detection.y} w={detection.w} h={detection.h}",
         )

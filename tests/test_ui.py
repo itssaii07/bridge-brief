@@ -300,13 +300,65 @@ class TestLiveServer:
         assert exc.value.code == 404
 
     def test_the_ui_serves_an_empty_database_without_error(self, tmp_path):
+        """Every route survives an empty index, which is the state it ships in.
+
+        The walkthrough matters most here: it is the front door, it reads a dozen
+        aggregates, and a demo that raises a 500 before anyone sees a number is
+        the worst possible first impression.
+        """
         server = make_server("127.0.0.1", 0, str(tmp_path / "empty.sqlite"))
         thread = threading.Thread(target=server.serve_forever, daemon=True)
         thread.start()
+        base = f"http://127.0.0.1:{server.server_address[1]}"
         try:
-            status, body = self.get(f"http://127.0.0.1:{server.server_address[1]}/")
+            status, body = self.get(base + "/structures")
             assert status == 200
             assert "No structures have been ingested" in body
+
+            status, body = self.get(base + "/")
+            assert status == 200
+            assert "Bridge Brief" in body
+            # With nothing ingested the counters read zero rather than breaking.
+            assert "structures indexed" in body
+
+            status, body = self.get(base + "/queue")
+            assert status == 200
+        finally:
+            server.shutdown()
+            server.server_close()
+
+    def test_a_corpus_image_route_refuses_an_inspection_upload(self, tmp_path):
+        """Invariant 6 at the transport layer.
+
+        The image route exists to serve benchmark imagery. An inspection
+        photograph of a real structure must not come out of it even if its
+        artifact id is known, because that is the one route that hands raw image
+        bytes to anyone who asks.
+        """
+        from src.db import connect
+        from src.ingest import uploads
+
+        Image = pytest.importorskip("PIL.Image", reason="Pillow is an optional extra")
+
+        db = tmp_path / "assets.sqlite"
+        conn = connect(db)
+        conn.execute("INSERT INTO structures (struct_norm) VALUES ('AL013450')")
+        source = tmp_path / "p01.png"
+        Image.new("RGB", (64, 48), (120, 120, 120)).save(source)
+        artifact_id = uploads.ingest_upload(
+            conn, "AL013450", source, upload_root=tmp_path / "uploads",
+            log=lambda *a: None)
+        conn.commit()
+        conn.close()
+
+        server = make_server("127.0.0.1", 0, str(db))
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        base = f"http://127.0.0.1:{server.server_address[1]}"
+        try:
+            with pytest.raises(urllib.error.HTTPError) as exc:
+                self.get(f"{base}/corpus-image/{artifact_id}")
+            assert exc.value.code == 404
         finally:
             server.shutdown()
             server.server_close()

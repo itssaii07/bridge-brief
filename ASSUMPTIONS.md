@@ -728,3 +728,72 @@ this project supports 3.10, so it cannot wait for that. `src/` was explicit from
 start; the test suite was not, and failed on Windows. It is now, and
 `tests/test_invariants.py::TestPortableTextIO` walks the AST of `src/`, `tests/` and
 `scripts/` and fails if any text-I/O call omits an encoding.
+
+---
+
+## M. The web application and the vision proposer
+
+**M1. The generative step reads photographs, and is gated like everything else.**
+`src/detect/vision.py` sends each uploaded photograph to a Claude vision model
+(`claude-opus-5` by default, `BRIDGE_BRIEF_VISION_MODEL` to change it) and asks, through
+structured outputs, for each visible defect's class, box, one-sentence description and
+confidence. It is registered as an ordinary `DefectDetector`, so its regions become
+`IMG-{struct}-{photo}-r{n}` artifacts and pass through the same grounding gate, citation
+chain and sign-off queue as the classical baseline. It is told never to judge safety or
+recommend work. Server-side fallbacks are enabled so a refused request is retried on a
+fallback model rather than silently returning nothing; a refusal or truncated reply that
+survives is reported as unavailable.
+
+**M2. Model confidence is capped at 0.75, the baseline's ceiling.** A language model's
+stated certainty is not a calibrated probability. Capping it means a model proposal can
+never read as more certain than a human-confirmed finding. Every model region is
+`single_source` and every brief sentence about one says it is an unconfirmed automated
+proposal.
+
+**M3. Boxes are fractions of the image, mapped onto the original.** The model is sent a
+downscaled JPEG built in memory (long edge 1,568 px) and discarded afterwards; the stored
+original is only ever read. Coordinates come back as fractions and are mapped onto the
+original's upright dimensions. They locate a defect; they do not measure it.
+
+**M4. Stored image dimensions follow EXIF orientation.** Browsers and both detectors show
+a photo upright when its EXIF flag says it was stored sideways, so region coordinates
+live in the upright frame. `_image_size` now reports the upright size too; before, a
+phone photo taken in portrait would have had every box drawn in the wrong place.
+
+**M5. It was not exercised against the live API here.** No Anthropic credentials exist
+on the build machine. The request is checked against the installed SDK (1.6.0) and a stub
+client in `tests/test_webapp.py`; the reply parser is tested against the response shape.
+The first real call is the operator's. Without a key the app falls back to the baseline
+and says so on the upload page, the home page and in the progress log.
+
+**M6. Uploads are anchored to the federal inventory, never the reverse.** The upload path
+refuses a structure that is not in the index, before anything is written, because the
+upload store would otherwise create an inventory row for it: a fabricated bridge.
+
+**M7. Uploads are content-addressed.** A web upload is stored as
+`{stem}_{sha256[:10]}.{ext}`, with its format read from its bytes rather than its name.
+Identical bytes are idempotent; a second photograph with the same filename can never
+overwrite the first original. Only the last path segment of a browser-supplied name is
+used, so a filename cannot steer where a file is written.
+
+**M8. A decided brief is frozen.** `record_action` refuses any action on a brief that has
+been signed off or rejected. Without this a reviewer could edit a brief after signing it,
+and the publication gate would release words nobody signed. Regenerating produces a new
+version, which needs its own review.
+
+**M9. The evaluation page renders from the last computed table.** The full harness takes
+about a minute on the real corpus (corpus-wide aggregates plus two validation passes). The
+page shows `reports/metrics.json` stamped with when it was computed, overlays the metrics
+that are cheap to read live, and offers a recompute that runs in the background.
+
+**M10. Schema v2.** `image_regions.description` holds a proposer's written description.
+Added through `src/schema.sql` and `src/migrations/002_region_description.sql`; additive
+only, so every v1 region, citation and sign-off is untouched.
+
+**M11. The app was verified end to end in a throwaway environment, not the real index.**
+Exercising the upload path needs photographs attached to a structure. Attaching test
+images to a real bridge in the real index would have been fabricated evidence, so the
+walkthrough ran against a scratch index holding only `AL012757`'s real federal records,
+with `BRIDGE_BRIEF_DATA` pointed at it, and was deleted afterwards. The real index holds
+no inspection uploads until an operator supplies real photographs.
+
