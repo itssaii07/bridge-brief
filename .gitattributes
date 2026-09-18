@@ -1,0 +1,3 @@
+# Windows batch files must keep CRLF line endings: cmd.exe mis-parses labels and
+# GOTO targets in LF-only batch files. This holds however the cloner's Git is set up.
+*.bat text eol=crlf

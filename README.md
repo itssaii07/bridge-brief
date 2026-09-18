@@ -7,6 +7,16 @@ between official condition records** that nobody currently checks for.
 A human inspector reviews and signs off. The system never issues a safety clearance
 or a maintenance order.
 
+**Start here:**
+
+| Document | For |
+|---|---|
+| [PROJECT_SLIDES.md](PROJECT_SLIDES.md) | The project in plain language, as a short slide deck |
+| [HOW_TO_SETUP.md](HOW_TO_SETUP.md) | Setting it up on a new laptop, and which datasets you need |
+| [HOW_TO_RUN.md](HOW_TO_RUN.md) | Running it: `run.bat`, then a two-minute demo |
+| [PROCESS.md](PROCESS.md) | How data flows through the project, stage by stage |
+| [TECH_STACK.md](TECH_STACK.md) | Everything it is built with, and why |
+
 > ### Current status
 >
 > **No data is on disk and nothing in this repository has been run against real data.**
